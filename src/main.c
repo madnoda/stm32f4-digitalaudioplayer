@@ -103,6 +103,8 @@ int main(void)
   printf("Low Voltage Stop\n");
 #endif
 
+  PWR_EnterSTANDBYMode();
+
   while(1) {
   }
 }

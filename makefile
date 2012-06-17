@@ -65,8 +65,7 @@ CM4LIB 		= ../STM32F4-Discovery_FW_V1.1.0/Libraries/CMSIS/
 CM4_DEVICE 	= $(CM4LIB)/ST/STM32F4xx
 CM4_CORE	= $(CM4LIB)/Include
 
-FATFS		= ../STM32F407ZGT6_FatFS_DISP_20120425/lib/ff
-FFLIB		= ./Utilities/Third_Party/fat_fs
+FATFS		= ../STM32F407xGT6_FatFS_DISP_20120520/lib/ff
 
 # include PATH
 
@@ -90,7 +89,7 @@ LIBRARY_DIRS = $(addprefix -L,$(LIBPATHS))
 # MATH_LIB	 =	-lm
 
 # LinkerScript PATH
-LINKER_PATH =  ../STM32F407ZGT6_FatFS_DISP_20120425/lib/linker
+LINKER_PATH =  ../STM32F407xGT6_FatFS_DISP_20120520/lib/linker
 LINKER_DIRS = $(addprefix -L,$(LINKER_PATH)) 
 
 # Object definition
@@ -137,6 +136,7 @@ LIBCFILES = \
  $(FWLIB)/src/stm32f4xx_spi.c			\
  $(FWLIB)/src/stm32f4xx_usart.c 		\
  $(FWLIB)/src/stm32f4xx_adc.c			\
+ $(FWLIB)/src/stm32f4xx_pwr.c			\
  $(FWLIB)/src/stm32f4xx_sdio.c
 
 #/*----- STM32 Debug library -----*/
