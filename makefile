@@ -1,9 +1,3 @@
-#################################################
-# MAKEFILE For STM32F4xxx Devices 				#
-# (c) 20111016 Nemui Trinomius					#
-# http://nemuisan.blog.bai.ne.jp				#
-# Based on Martin Thomas's makefiles thanks!	#
-#################################################
 TCHAIN  = arm-m4-eabi
 #TCHAIN  = arm-none-eabi
 TOOLDIR = /bin
