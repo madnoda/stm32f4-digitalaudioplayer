@@ -59,8 +59,8 @@ CM4LIB 		= ../STM32F4-Discovery_FW_V1.1.0/Libraries/CMSIS/
 CM4_DEVICE 	= $(CM4LIB)/ST/STM32F4xx
 CM4_CORE	= $(CM4LIB)/Include
 
-FATFS		= ../STM32F407xGT6_FatFS_DISP_20120520/lib/ff
-
+FATFS		= ../STM32F407xGT6_FatFS_DISP_20120520
+FATFSLIB	= $(FATFS)/lib/ff
 # include PATH
 
 INCPATHS	 =															\
@@ -71,7 +71,7 @@ INCPATHS	 =															\
 	../STM32F4-Discovery_FW_V1.1.0/Libraries/STM32F4xx_StdPeriph_Driver/inc
 
 INCPATHS += \
-	$(FATFS)
+	$(FATFSLIB)
 
 
 INCLUDES     = $(addprefix -I ,$(INCPATHS))
@@ -83,7 +83,7 @@ LIBRARY_DIRS = $(addprefix -L,$(LIBPATHS))
 # MATH_LIB	 =	-lm
 
 # LinkerScript PATH
-LINKER_PATH =  ../STM32F407xGT6_FatFS_DISP_20120520/lib/linker
+LINKER_PATH =  $(FATFS)/lib/linker
 LINKER_DIRS = $(addprefix -L,$(LINKER_PATH)) 
 
 # Object definition
@@ -95,15 +95,15 @@ SOURCE  = ./src
 CFILES = \
  $(SOURCE)/main.c					\
  $(SOURCE)/sd.c						\
- $(FATFS)/ff.c 						\
- $(FATFS)/sdio_stm32f4.c 			\
- $(FATFS)/diskio_sdio.c 			\
- $(FATFS)/option/cc932.c			\
+ $(FATFSLIB)/ff.c 						\
+ $(FATFSLIB)/sdio_stm32f4.c 			\
+ $(FATFSLIB)/diskio_sdio.c 			\
+ $(FATFSLIB)/option/cc932.c			\
  $(SOURCE)/system_stm32f4xx.c
 
 ifeq ($(USING_PRINTF),USE_PRINTF)
 CFILES += \
- ../STM32F407ZGT6_FatFS_DISP_20120425/src/syscalls.c
+ $(FATFS)/src/syscalls.c
 endif
 
 ifeq ($(USING_USART),USE_USART)
