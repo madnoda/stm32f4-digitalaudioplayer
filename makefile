@@ -22,26 +22,28 @@ MPU_DENSITY		= STM32F4xx
 HSE_CLOCK 		= 8000000
 USE_CLOCK		= USE_HSE
 #USE_CLOCK		= USE_HSI
-PERIF_DRIVER		= USE_STDPERIPH_DRIVER
-
+PERIF_DRIVER	= USE_STDPERIPH_DRIVER
+USE_ADC			= NO_ADC
 USING_USART		= USE_USART
 USING_PRINTF		= USE_PRINTF
 UART_DEFAULT_NUM	= 1
+USE_MP3			= MP3
+USE_MP3FPM		= FPM_DEFAULT
 
 # Use FreeRTOS?
 
 # Synthesis makefile Defines
 DEFZ =	\
-	$(USE_PHY) $(PERIF_DRIVER) 	\
-	$(USE_FPU) $(SUBMODEL)	\
+	$(USE_PHY) $(PERIF_DRIVER) $(USE_MP3) $(USE_MP3FPM)	\
+	$(USE_FPU) $(SUBMODEL) $(USE_ADC)						\
 	$(USE_CLOCK) $(USING_PRINTF) $(USING_USART)
 
-SYNTHESIS_DEFS	= $(addprefix -D,$(DEFZ))				\
-		 -DPACK_STRUCT_END=__attribute\(\(packed\)\) 		\
+SYNTHESIS_DEFS	= $(addprefix -D,$(DEFZ))						\
+		 -DPACK_STRUCT_END=__attribute\(\(packed\)\) 			\
 		 -DALIGN_STRUCT_END=__attribute\(\(aligned\(4\)\)\) 	\
-		 -DMPU_SUBMODEL=\"$(SUBMODEL)\"			\
-		 -DAPP_VERSION=\"$(APP_VER)\"				\
-		 -DHSE_VALUE=$(HSE_CLOCK)UL				\
+		 -DMPU_SUBMODEL=\"$(SUBMODEL)\"						\
+		 -DAPP_VERSION=\"$(APP_VER)\"							\
+		 -DHSE_VALUE=$(HSE_CLOCK)UL							\
 		 -DUART_DEFAULT_NUM=$(UART_DEFAULT_NUM) 
 
 # TARGET definition
@@ -59,9 +61,13 @@ CM4LIB 		= ../STM32F4-Discovery_FW_V1.1.0/Libraries/CMSIS/
 CM4_DEVICE 	= $(CM4LIB)/ST/STM32F4xx
 CM4_CORE	= $(CM4LIB)/Include
 
-FATFS		= ../STM32F407xGT6_FatFS_DISP_20120520
+FATFS		= ../STM32F407xGT6_FatFS_DISP_20120710
 FATFSLIB	= $(FATFS)/lib/ff
+
+MP3LIB		= ../libmad-0.15.1b
+
 # include PATH
+
 
 INCPATHS	 =															\
  	./																	\
@@ -72,6 +78,11 @@ INCPATHS	 =															\
 
 INCPATHS += \
 	$(FATFSLIB)
+
+ifeq ($(USE_MP3),MP3)
+INCPATHS += \
+	$(MP3LIB)
+endif
 
 
 INCLUDES     = $(addprefix -I ,$(INCPATHS))
@@ -93,13 +104,33 @@ LIBOBJS  = $(LIBCFILES:%.c=%.o) $(SFILES:%.s=%.o)
 # C code PATH
 SOURCE  = ./src
 CFILES = \
- $(SOURCE)/main.c					\
- $(SOURCE)/sd.c						\
+ $(SOURCE)/main.c						\
+ $(SOURCE)/sd.c							\
  $(FATFSLIB)/ff.c 						\
  $(FATFSLIB)/sdio_stm32f4.c 			\
  $(FATFSLIB)/diskio_sdio.c 			\
- $(FATFSLIB)/option/cc932.c			\
+ $(FATFSLIB)/option/cc932.c
+
+ifeq ($(USE_MP3),MP3)
+CFILES += \
+ $(SOURCE)/system_stm32f4xxMP3.c
+else
+CFILES += \
  $(SOURCE)/system_stm32f4xx.c
+endif
+
+ifeq ($(USE_MP3),MP3)
+CFILES += \
+ $(MP3LIB)/stream.c						\
+ $(MP3LIB)/bit.c						\
+ $(MP3LIB)/timer.c						\
+ $(MP3LIB)/huffman.c					\
+ $(MP3LIB)/synth.c						\
+ $(MP3LIB)/layer12.c					\
+ $(MP3LIB)/layer3.c						\
+ $(MP3LIB)/frame.c						\
+ $(MP3LIB)/decoder.c
+endif
 
 ifeq ($(USING_PRINTF),USE_PRINTF)
 CFILES += \

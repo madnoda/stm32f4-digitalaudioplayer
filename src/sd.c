@@ -13,7 +13,22 @@
 #include "main.h"
 #include "ff.h"
 #include "sd.h"
-#define BUFSIZE  32*1024
+
+#ifdef MP3
+# define SIZEOF_INT 4
+# define SIZEOF_LONG 4
+# define SIZEOF_LONG_LONG 8
+
+#include "version.h"
+#include "fixed.h"
+#include "bit.h"
+#include "timer.h"
+#include "stream.h"
+#include "frame.h"
+#include "synth.h"
+#include "decoder.h"
+#define MAX_BUFF 2304
+#endif
 
 DWORD acc_size;
 WORD acc_files, acc_dirs;
@@ -21,10 +36,9 @@ FILINFO Finfo;
 DIR  dir;
 FATFS Fatfs[_VOLUMES];
 FIL fileR;
-BYTE Buff[BUFSIZE] __attribute__ ((aligned (4))) ;
 __IO uint8_t Command_index = 0;
 
-UINT sWAV; // WAV ファイルの数
+UINT sMUSIC; // Music ファイルの数
 
 FATFS *fs;  /* Pointer to file system object */
 
@@ -121,7 +135,11 @@ FRESULT initSD()
 #endif
   f_mount(0, &Fatfs[0]);
 #ifdef USE_PRINTF
+#ifndef MP3
   printf("_MAX_SS : %d\n",_MAX_SS);
+#else
+  printf("MAX_BUFF : %d\n",MAX_BUFF);
+#endif
   printf("FatFs module test terminal for %s\n",MPU_SUBMODEL);
   cputs(_USE_LFN ? "LFN Enabled" : "LFN Disabled");
   printf(", Code page: %u\n", _CODE_PAGE);
@@ -149,7 +167,6 @@ FRESULT initSD()
       put_rc(res);
     } else {
 #ifdef USE_PRINTF
-
       printf("\r%u files, %lu bytes.\n%u folders.\n"
               "%lu KB total disk space.\n%lu KB available.\n",
               acc_files, acc_size, acc_dirs,
@@ -203,7 +220,7 @@ FRESULT lsSD()
     put_rc(res);
   } else {
     p1 = s1 = s2 = 0;
-    sWAV = 0;
+    sMUSIC = 0;
     for(;;) {
       res = f_readdir(& dir, &Finfo);
       if ((res != FR_OK) || !Finfo.fname[0]) break;
@@ -211,8 +228,8 @@ FRESULT lsSD()
         s2++;
       } else {
         s1++; p1 += Finfo.fsize;
-        if (isEx(&(Finfo.fname[0]),"WAV")) {
-          sWAV++;
+        if (isEx(&(Finfo.fname[0]),"WAV") || isEx(&(Finfo.fname[0]),"MP3")) {
+          sMUSIC++;
         }
       }
 #ifdef USE_PRINTF
@@ -228,7 +245,7 @@ FRESULT lsSD()
 #if _USE_LFN
       for (p2 = strlen(Finfo.fname); p2 < 14; p2++)
         cputs(" ");
-      printf("%s\n", Lfname);
+      printf(" %s\n", Lfname);
 #else
       cputs("\r\n");
 #endif
@@ -243,7 +260,7 @@ FRESULT lsSD()
       printf(", %10lu bytes free\n", p1 * fs->csize * 512);
     else
       put_rc(res);
-    printf("WAVE File %u \n", sWAV);
+    printf("WAVE File %u \n", sMUSIC);
 #endif
   }
   return res;
@@ -260,7 +277,7 @@ void sdio_playNO(UINT n)
     put_rc(res);
   } else {
     p1 = s1 = s2 = 0;
-    sWAV = 0;
+    sMUSIC = 0;
     for(;;) {
       res = f_readdir(& dir, &Finfo);
       if ((res != FR_OK) || !Finfo.fname[0]) break;
@@ -268,33 +285,16 @@ void sdio_playNO(UINT n)
         s2++;
       } else {
         s1++; p1 += Finfo.fsize;
-        if (isEx(&(Finfo.fname[0]),"WAV")) {
-          if (n == sWAV) {
+        if (isEx(&(Finfo.fname[0]),"WAV") || isEx(&(Finfo.fname[0]),"MP3")) {
+          if (n == sMUSIC) {
             sdio_play(&(Finfo.fname[0]));
           }
-          sWAV++;
+          sMUSIC++;
         }
       }
     }
   }
 }
-
-#define  CHUNK_ID                            0x52494646  /* correspond to the letters 'RIFF' */
-#define  FILE_FORMAT                         0x57415645  /* correspond to the letters 'WAVE' */
-#define  FORMAT_ID                           0x666D7420  /* correspond to the letters 'fmt ' */
-#define  DATA_ID                             0x64617461  /* correspond to the letters 'data' */
-#define  LIST_ID                             0x4C495354  /* correspond to the letters 'LIST' */
-#define  FACT_ID                             0x66616374  /* correspond to the letters 'fact' */
-#define  WAVE_FORMAT_PCM                     0x01
-#define  FORMAT_CHNUK_SIZE                   0x10
-#define  CHANNEL_MONO                        0x01
-#define  CHANNEL_STEREO                      0x02
-#define  SAMPLE_RATE_8000                    8000
-#define  SAMPLE_RATE_11025                   11025
-#define  SAMPLE_RATE_22050                   22050
-#define  SAMPLE_RATE_44100                   44100
-#define  BITS_PER_SAMPLE_8                   8
-#define  BITS_PER_SAMPLE_16                  16
 
 typedef enum
 {
@@ -332,26 +332,55 @@ typedef enum
 
  static uint32_t wavelen = 0;
  __IO ErrorCode WaveFileStatus = Unvalid_RIFF_ID;
+ #define SMALL_BUFF_SIZE 512
+ uint8_t small_buffer[SMALL_BUFF_SIZE] ={0x00};
+ int small_buffer_pointer = -1;
+#ifndef MP3
  uint16_t buffer[_MAX_SS] ={0x00};
  #define RING_BUF_SIZE 4
  uint16_t ring_buffer[RING_BUF_SIZE][_MAX_SS] ={0x00};
  volatile uint8_t ring_buffer_p_in  = 0;
  volatile uint8_t ring_buffer_p_out = 0;
- volatile uint8_t ring_buffer_p_out_old = 0;
+#else
+ uint16_t buffer[MAX_BUFF] ={0x00};
+ #define RING_BUF_SIZE 8
+ uint16_t ring_buffer[RING_BUF_SIZE][MAX_BUFF];
+ volatile uint8_t ring_buffer_p_in  = 0;
+ volatile uint8_t ring_buffer_p_out = 0;
+#endif
  static __IO uint32_t SpeechDataOffset = 0x00;
  UINT BytesRead;
  WAVE_FormatTypeDef WAVE_Format;
-// uint8_t buffer_switch = 1;
  extern FIL fileR;
  extern DIR dir;
+ void WavePlayBack(uint32_t AudioFreq);
 
-__IO uint8_t volume = 70, AudioPlayStart = 0;
+#ifdef MP3
+ int defFrameSize = 0;
+ int oldFrameSize = 0;
+ void Mp3PlayBack(uint32_t AudioFreq);
+ uint32_t  mp3SampleRate;
+ uint8_t  mp3FlgFirst;
+ uint16_t  mp3i;
+#endif
+
 __IO uint32_t WaveCounter;
 __IO uint32_t WaveDataLength = 0;
 static __IO uint32_t TimingDelay;
+  int sw_status;
+  int sw_count;
 
  static ErrorCode WavePlayer_WaveParsing(uint32_t *FileLen);
+#ifdef MP3
+ static ErrorCode Mp3Player_Mp3Parsing(uint32_t *FileLen);
+#endif
 uint32_t ReadUnit(uint8_t *buffer, uint8_t idx, uint8_t NbrOfBytes, Endianness BytesFormat);
+
+#ifndef NO_ADC
+  int adcCount;
+  int lowVoltage;
+  unsigned int adc1w,adc2w;
+#endif
 
 void Delay(__IO uint32_t nTime)
 {
@@ -366,7 +395,6 @@ void sdio_play(char * filename)
   char path[] = "0:/";
   ring_buffer_p_in  = 0;
   ring_buffer_p_out = 0;
-  ring_buffer_p_out_old = ring_buffer_p_out;
   /* Get the read out protection status */
   if (f_opendir(&dir, path)!= FR_OK)
   {
@@ -378,12 +406,12 @@ void sdio_play(char * filename)
     if (f_open(&fileR, filename , FA_READ) != FR_OK) {
       Command_index = 1;
     } else {    
-      f_read (&fileR, buffer, _MAX_SS, &BytesRead);
+      f_read (&fileR, buffer, 512, &BytesRead);
       {
 #ifdef USE_PRINTF
          int i,j;
          unsigned char w;
-         for(i = 0; i < 256; i += 16) {
+         for(i = 0; i < 256 ; i += 16) {
            printf("%04x ",i);
            for(j = 0; j < 16; j += 2) {
              printf("%02x ",buffer[(i + j) / 2] % 256);
@@ -416,9 +444,9 @@ void sdio_play(char * filename)
 #endif
       }
       WaveFileStatus = WavePlayer_WaveParsing(&wavelen);
+
       if (WaveFileStatus == Valid_WAVE_File) {
 #ifdef USE_PRINTF
-
         /* the .WAV file is valid */
         printf("the .WAV file %s is valid\r\n",filename);
         /* Set WaveDataLenght to the Speech wave length */
@@ -426,125 +454,388 @@ void sdio_play(char * filename)
         WaveDataLength = WAVE_Format.DataSize;
 #ifdef USE_PRINTF
         printf("Data Size : %d\n",WAVE_Format.DataSize);
-        printf("Sample Rate : %0.1f Hz\n",(double)WAVE_Format.SampleRate/1000.0);
+        printf("Sample Rate : %0.1f kHz %d bits\n",(double)WAVE_Format.SampleRate/1000.0,WAVE_Format.BitsPerSample);
         printf("Byte Rate : %d\n",WAVE_Format.ByteRate);
         printf("Time : %0.1f sec\n",((double)WaveDataLength) / ((double)WAVE_Format.ByteRate));
 #endif
-      } else{
+        /* Play the wave */
+        if (WAVE_Format.BitsPerSample == 16)
+          WavePlayBack(WAVE_Format.SampleRate);
+      } else {
+#ifdef MP3
+        WaveFileStatus = Mp3Player_Mp3Parsing(&wavelen);
         /* Unvalid wave file */
+        if (WaveFileStatus == Valid_WAVE_File) {
+#ifdef USE_PRINTF
+
+          /* the .MP3 file is valid */
+          printf("the .MP3 file %s is valid\r\n",filename);
+          /* Set WaveDataLenght to the Speech wave length */
+#endif
+          Mp3PlayBack(mp3SampleRate);
+          return;
+        }
+#ifdef USE_PRINTF
+        int i,j,k;
+        k = 512;
+        while (k < 512) {
+          f_read (&fileR, buffer, 512, &BytesRead);
+          unsigned char w;
+          for(i = 0; i < 256; i += 16) {
+            printf("%04x ",k + i);
+            for(j = 0; j < 16; j += 2) {
+              printf("%02x ",buffer[(i + j) / 2] % 256);
+              printf("%02x ",buffer[(i + j) / 2] / 256);
+            }
+            for(j = 0; j < 16; j += 2) {
+              w = buffer[(i + j) / 2] % 256;
+              if ((w >= '0') && (w <= '9')) {
+                printf("%c",w);
+              } else if ((w >= 'A') && (w <= 'Z')) {
+                printf("%c",w);
+              } else if ((w >= 'a') && (w <= 'z')) {
+                printf("%c",w);
+              } else {
+                printf(".");
+              }
+              w = buffer[(i + j) / 2] / 256;
+              if ((w >= '0') && (w <= '9')) {
+                printf("%c",w);
+              } else if ((w >= 'A') && (w <= 'Z')) {
+                printf("%c",w);
+              } else if ((w >= 'a') && (w <= 'z')) {
+                printf("%c",w);
+              } else {
+                printf(".");
+              }
+            }
+            printf("\n");
+          }
+          k += 512;
+        }
+#endif
 #ifdef USE_PRINTF
         cputs("Unvalid wave file\r\n");
 #endif
-        while(1)
-        {
-          Delay(10);
-        }
+#endif
       }
-      /* Play the wave */
-      WavePlayBack(WAVE_Format.SampleRate);
     }    
   }
+}
+
+int SetSmallBuffer(unsigned long p,int i)
+{
+  int new_pointer = small_buffer_pointer;
+  if (small_buffer_pointer == -1) {
+    new_pointer = p;
+  } else {
+    if ((p + i - small_buffer_pointer) > SMALL_BUFF_SIZE) {
+      new_pointer = p;
+    }
+  }
+  if (small_buffer_pointer != new_pointer) {
+    small_buffer_pointer = new_pointer;
+    f_lseek(&fileR, small_buffer_pointer);
+    f_read (&fileR, small_buffer, _MAX_SS, &BytesRead) ;
+  }
+}
+
+int CmpSmallBuffer(unsigned long p,const unsigned char *b)
+{
+  int i = 0;
+  while(b[i]) {
+    i++;
+  }
+  i--;
+  SetSmallBuffer(p,i);
+  i = 0;
+  while(b[i]) {
+    if (small_buffer[p + i - small_buffer_pointer] != b[i])
+      return 0;
+    i++;
+  }
+  return 1;
+}
+
+unsigned long ReadSmallBufferULONG(unsigned long p)
+{
+  unsigned long index = 0;
+  unsigned long temp = 0;
+  SetSmallBuffer(p,4);
+  for (index = 0; index < 4; index++) {
+    temp |= small_buffer[p + index - small_buffer_pointer] << (index * 8);
+  }
+  return temp;
+}
+
+unsigned long ReadSmallBufferUSHORT(unsigned long p)
+{
+  unsigned long index = 0;
+  unsigned long temp = 0;
+  SetSmallBuffer(p,2);
+  for (index = 0; index < 2; index++) {
+    temp |= small_buffer[p + index - small_buffer_pointer] << (index * 8);
+  }
+  return temp;
 }
 
 static ErrorCode WavePlayer_WaveParsing(uint32_t *FileLen)
 {
   uint32_t temp = 0x00;
   uint32_t extraformatbytes = 0;
-  
-  /* Read chunkID, must be 'RIFF' */
-  temp = ReadUnit((uint8_t*)buffer, 0, 4, BigEndian);
-  if (temp != CHUNK_ID) {
+  small_buffer_pointer = -1;
+  if (! CmpSmallBuffer(0,"RIFF")) {
     return(Unvalid_RIFF_ID);
   }
-  
-  /* Read the file length */
-  WAVE_Format.RIFFchunksize = ReadUnit((uint8_t*)buffer, 4, 4, LittleEndian);
-  
-  /* Read the file format, must be 'WAVE' */
-  temp = ReadUnit((uint8_t*)buffer, 8, 4, BigEndian);
-  if (temp != FILE_FORMAT) {
+  WAVE_Format.RIFFchunksize = ReadSmallBufferULONG(4);
+  if (! CmpSmallBuffer(8,"WAVE")) {
     return(Unvalid_WAVE_Format);
   }
-  
-  /* Read the format chunk, must be'fmt ' */
-  temp = ReadUnit((uint8_t*)buffer, 12, 4, BigEndian);
-  if (temp != FORMAT_ID) {
-    return(Unvalid_FormatChunk_ID);
-  }
-  /* Read the length of the 'fmt' data, must be 0x10 -------------------------*/
-  temp = ReadUnit((uint8_t*)buffer, 16, 4, LittleEndian);
+  temp = ReadSmallBufferULONG(16);
   if (temp != 0x10) {
     extraformatbytes = 1;
   }
-  /* Read the audio format, must be 0x01 (PCM) */
-  WAVE_Format.FormatTag = ReadUnit((uint8_t*)buffer, 20, 2, LittleEndian);
-  if (WAVE_Format.FormatTag != WAVE_FORMAT_PCM) {
-    return(Unsupporetd_FormatTag);
+  WAVE_Format.FormatTag = ReadSmallBufferUSHORT(20);
+  if (WAVE_Format.FormatTag != 0x01) {
+      return(Unsupporetd_FormatTag);
   }
-  
-  /* Read the number of channels, must be 0x01 (Mono) or 0x02 (Stereo) */
-  WAVE_Format.NumChannels = ReadUnit((uint8_t*)buffer, 22, 2, LittleEndian);
-  
-  /* Read the Sample Rate */
-  WAVE_Format.SampleRate = ReadUnit((uint8_t*)buffer, 24, 4, LittleEndian);
-
-  /* Read the Byte Rate */
-  WAVE_Format.ByteRate = ReadUnit((uint8_t*)buffer, 28, 4, LittleEndian);
-  
-  /* Read the block alignment */
-  WAVE_Format.BlockAlign = ReadUnit((uint8_t*)buffer, 32, 2, LittleEndian);
-  
-  /* Read the number of bits per sample */
-  WAVE_Format.BitsPerSample = ReadUnit((uint8_t*)buffer, 34, 2, LittleEndian);
-  if (WAVE_Format.BitsPerSample != BITS_PER_SAMPLE_16) {
+  WAVE_Format.NumChannels = ReadSmallBufferUSHORT(22);
+  WAVE_Format.SampleRate = ReadSmallBufferULONG(24);
+  WAVE_Format.ByteRate = ReadSmallBufferULONG(28);
+  WAVE_Format.BlockAlign = ReadSmallBufferUSHORT(32);
+  WAVE_Format.BitsPerSample = ReadSmallBufferUSHORT(34);
+  if ((WAVE_Format.BitsPerSample != 16) && (WAVE_Format.BitsPerSample != 24)) {
     return(Unsupporetd_Bits_Per_Sample);
   }
   SpeechDataOffset = 36;
-  /* If there is Extra format bytes, these bytes will be defined in "Fact Chunk" */
   if (extraformatbytes == 1) {
-    /* Read th Extra format bytes, must be 0x00 */
-    temp = ReadUnit((uint8_t*)buffer, 36, 2, LittleEndian);
-    if (temp != 0x00)
-    {
-      return(Unsupporetd_ExtraFormatBytes);
+    temp = ReadSmallBufferUSHORT(36);
+    if (temp != 0x00) {
+        return(Unsupporetd_ExtraFormatBytes);
     }
-    /* Read the Fact chunk, must be 'fact' */
-    temp = ReadUnit((uint8_t*)buffer, 38, 4, BigEndian);
-    if (temp != FACT_ID) {
-      return(Unvalid_FactChunk_ID);
+    if (! CmpSmallBuffer(38,"fmt ")) {
+        return(Unvalid_FactChunk_ID);
     }
-    /* Read Fact chunk data Size */
-
-    temp = ReadUnit((uint8_t*)buffer, 42, 4, LittleEndian);
-    
+    temp = ReadSmallBufferULONG(42);
     SpeechDataOffset += 10 + temp;
   }
-  /* Read the Data chunk, must be 'data' */
-  temp = ReadUnit((uint8_t*)buffer, SpeechDataOffset, 4, BigEndian);
-  SpeechDataOffset += 4;
-  while (temp == LIST_ID) {
-    temp = ReadUnit((uint8_t*)buffer, SpeechDataOffset, 4, LittleEndian);
-#ifdef USE_PRINTF
-    printf("LIST_ID %d\n",temp);
-#endif
+  while (CmpSmallBuffer(SpeechDataOffset,"LIST") || CmpSmallBuffer(SpeechDataOffset,"PAD ")) {
     SpeechDataOffset += 4;
+    temp = ReadSmallBufferULONG(SpeechDataOffset);
+    printf("LIST_ID %ld\n",temp);
     SpeechDataOffset += temp;
-#ifdef USE_PRINTF
-    printf("NEXT %x\n",SpeechDataOffset);
-#endif
-    temp = ReadUnit((uint8_t*)buffer, SpeechDataOffset, 4, BigEndian);
     SpeechDataOffset += 4;
+    printf("NEXT %lx\n",SpeechDataOffset);
   }
-  if (temp != DATA_ID) {
+  if (! CmpSmallBuffer(SpeechDataOffset,"data")) {
     return(Unvalid_DataChunk_ID);
   }
-  
-  /* Read the number of sample data */
-  WAVE_Format.DataSize = ReadUnit((uint8_t*)buffer, SpeechDataOffset, 4, LittleEndian);
+  SpeechDataOffset += 4;
+  WAVE_Format.DataSize = ReadSmallBufferULONG(SpeechDataOffset);
   SpeechDataOffset += 4;
   WaveCounter =  SpeechDataOffset;
   return(Valid_WAVE_File);
 }
+
+#ifdef MP3
+static ErrorCode Mp3Player_Mp3Parsing(uint32_t *FileLen)
+{
+  uint8_t* buf;
+  buf = (uint8_t*)buffer;
+  SpeechDataOffset = 0;
+  if ((buf[0] == 'I') && (buf[1] == 'D') && (buf[2] == '3')) {
+    SpeechDataOffset = 10;
+    SpeechDataOffset += (buf[6] << 21);
+    SpeechDataOffset += (buf[7] << 14);
+    SpeechDataOffset += (buf[8] << 7);
+    SpeechDataOffset += (buf[9]);
+#ifdef USE_PRINTF
+    printf("ID3 ver2.x HEADER\n");
+    printf("offset :%ld\n",SpeechDataOffset);
+#endif
+  }
+  f_lseek(&fileR, SpeechDataOffset);
+  f_read (&fileR, buf, 512, &BytesRead); 
+  if (BytesRead <= 0) {
+#ifdef USE_PRINTF
+    printf("ファイルがロードできません。\n");
+#endif
+    return(Unvalid_DataChunk_ID);
+  }
+  if ((buf[0] != 0xff) && ((buf[1] & 0xf0) != 0xf0))
+    return(Unvalid_DataChunk_ID);
+#ifdef USE_PRINTF
+  if (buf[1] & 0x08) {
+    printf("MPEG-1 ");
+  } else {
+    printf("MPEG-2 ");
+  }
+  switch (buf[1] & 0x06) {
+    case 2:
+      printf("Layer3 ");
+      break;
+    case 4:
+      printf("Layer2 ");
+      break;
+    case 6:
+      printf("Layer1 ");
+      break;
+  }
+  if (buf[1] & 0x01) {
+    printf("ERRbit\n");
+  } else {
+    printf("NoERRbit\n");
+  }
+  switch (buf[2] & 0xf0) {
+    case 0x00:
+      printf("FreeFormat ");
+      break;
+    case 0x10:
+      printf("32kbps ");
+      defFrameSize = 32000;
+      break;
+    case 0x20:
+      printf("40kbps ");
+      defFrameSize = 40000;
+      break;
+    case 0x30:
+      printf("48kbps ");
+      defFrameSize = 48000;
+      break;
+    case 0x40:
+      printf("56kbps ");
+      defFrameSize = 56000;
+      break;
+    case 0x50:
+      printf("64kbps ");
+      defFrameSize = 64000;
+      break;
+    case 0x60:
+      printf("80kbps ");
+      defFrameSize = 80000;
+      break;
+    case 0x70:
+      printf("96kbps ");
+      defFrameSize = 96000;
+      break;
+    case 0x80:
+      printf("112kbps ");
+      defFrameSize = 112000;
+      break;
+    case 0x90:
+      printf("128kbps ");
+      defFrameSize = 128000;
+      break;
+    case 0xa0:
+      printf("120kbps ");
+      defFrameSize = 120000;
+      break;
+    case 0xb0:
+      printf("192kbps ");
+      defFrameSize = 192000;
+      break;
+    case 0xc0:
+      printf("224kbps ");
+      defFrameSize = 224000;
+      break;
+    case 0xd0:
+      printf("256kbps ");
+      defFrameSize = 256000;
+      break;
+    case 0xe0:
+      printf("320kbps ");
+      defFrameSize = 320000;
+      break;
+    default:
+      printf("%02x\n",buf[2] & 0xf0);
+      break;
+  }
+  switch (buf[2] & 0x0c) {
+    case 0x00:
+      printf("44.1kHz ");
+      mp3SampleRate = 44100;
+      defFrameSize = 144 * defFrameSize / 44100;
+      break;
+    case 0x40:
+      printf("48kHz ");
+      mp3SampleRate = 48000;
+      defFrameSize = 144 * defFrameSize / 48000;
+      break;
+    case 0x80:
+      printf("32kHz ");
+      mp3SampleRate = 32000;
+      defFrameSize = 144 * defFrameSize / 32000;
+      break;
+  }
+  printf("\n");
+  printf("Frame Size:%d\n",defFrameSize);
+#else
+  switch (buf[2] & 0xf0) {
+    case 0x00:
+      break;
+    case 0x10:
+      defFrameSize = 32000;
+      break;
+    case 0x20:
+      defFrameSize = 40000;
+      break;
+    case 0x30:
+      defFrameSize = 48000;
+      break;
+    case 0x40:
+      defFrameSize = 56000;
+      break;
+    case 0x50:
+      defFrameSize = 64000;
+      break;
+    case 0x60:
+      defFrameSize = 80000;
+      break;
+    case 0x70:
+      defFrameSize = 96000;
+      break;
+    case 0x80:
+      defFrameSize = 112000;
+      break;
+    case 0x90:
+      defFrameSize = 128000;
+      break;
+    case 0xa0:
+      defFrameSize = 120000;
+      break;
+    case 0xb0:
+      defFrameSize = 192000;
+      break;
+    case 0xc0:
+      defFrameSize = 224000;
+      break;
+    case 0xd0:
+      defFrameSize = 256000;
+      break;
+    case 0xe0:
+      defFrameSize = 320000;
+      break;
+    default:
+      break;
+  }
+  switch (buf[2] & 0x0c) {
+    case 0x00:
+      mp3SampleRate = 44100;
+      defFrameSize = 144 * defFrameSize / 44100;
+      break;
+    case 0x40:
+      mp3SampleRate = 48000;
+      defFrameSize = 144 * defFrameSize / 48000;
+      break;
+    case 0x80:
+      mp3SampleRate = 32000;
+      defFrameSize = 144 * defFrameSize / 32000;
+      break;
+  }
+#endif
+  return(Valid_WAVE_File);
+}
+#endif
 
 uint32_t ReadUnit(uint8_t *buffer, uint8_t idx, uint8_t NbrOfBytes, Endianness BytesFormat)
 {
@@ -568,76 +859,36 @@ void play(uint32_t Addr, uint32_t Size);
 void WavePlayBack(uint32_t AudioFreq)
 { 
   /* Start playing */
-  AudioPlayStart = 1;
   Command_index = 0;
-  int sw_status = 1;
-  int sw_count = 0;
-//  RepeatState =0;
-
-  /* Initialize wave player (Codec, DMA, I2C) */
-//  WavePlayerInit(AudioFreq);
-
-// ADC Init
-  GPIO_InitTypeDef      GPIO_InitStructure;
-  ADC_InitTypeDef       ADC_InitStructure;
-  ADC_CommonInitTypeDef ADC_CommonInitStructure;
-  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
-  RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
-  RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC2, ENABLE);
-  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6|GPIO_Pin_7;
-  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AN;
-  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL ;
-  GPIO_Init(GPIOA, &GPIO_InitStructure);
-  ADC_CommonInitStructure.ADC_Mode = ADC_Mode_Independent;
-  ADC_CommonInitStructure.ADC_Prescaler = ADC_Prescaler_Div6;
-  ADC_CommonInitStructure.ADC_DMAAccessMode = ADC_DMAAccessMode_Disabled;
-  ADC_CommonInitStructure.ADC_TwoSamplingDelay = ADC_TwoSamplingDelay_5Cycles;
-  ADC_CommonInit(&ADC_CommonInitStructure);
-  ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
-  ADC_InitStructure.ADC_ScanConvMode = DISABLE;
-  ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
-  ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
-//  ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_T1_CC1;
-  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
-  ADC_InitStructure.ADC_NbrOfConversion = 1;
-  ADC_Init(ADC1, &ADC_InitStructure);
-  ADC_Cmd(ADC1, ENABLE);
-  ADC_RegularChannelConfig(ADC1, ADC_Channel_7, 1, ADC_SampleTime_3Cycles);
-
-  ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
-  ADC_InitStructure.ADC_ScanConvMode = DISABLE;
-  ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
-  ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
-//  ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_T1_CC1;
-  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
-  ADC_InitStructure.ADC_NbrOfConversion = 1;
-  ADC_Init(ADC2, &ADC_InitStructure);
-  ADC_Cmd(ADC2, ENABLE);
-  ADC_RegularChannelConfig(ADC2, ADC_Channel_6, 1, ADC_SampleTime_3Cycles);
-  ADC_SoftwareStartConv(ADC1);
-  ADC_SoftwareStartConv(ADC2);
-
-  int adcCount = 0;
-  int lowVoltage = 0;
-  uint16_t adc1w,adc2w;
+  sw_status = 1;
+  sw_count = 0;
+//  int i;
+//  short r,l;
+#ifndef NO_ADC
+  adcCount = 0;
+  lowVoltage = 0;
+#endif
   /* Get Data from SD CARD */
   f_lseek(&fileR, WaveCounter);
   ring_buffer_p_in  = 0;
   ring_buffer_p_out = 0;
-  ring_buffer_p_out_old = ring_buffer_p_out;
   while (ring_buffer_p_in < RING_BUF_SIZE) {
-    f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS, &BytesRead); 
+#ifndef MP3
+    f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS * 2, &BytesRead); 
+#else
+    f_read (&fileR, ring_buffer[ring_buffer_p_in], MAX_BUFF * 2, &BytesRead);
+#endif 
     ring_buffer_p_in++;
   }
   ring_buffer_p_in  = 0;
   /* Start playing wave */
-  play((uint32_t)ring_buffer[0], _MAX_SS);
-//  buffer_switch = 1;
+#ifndef MP3
+  play((uint32_t)ring_buffer[0], _MAX_SS * 2);
+#else
+  play((uint32_t)ring_buffer[0], MAX_BUFF * 2);
+#endif
   ring_buffer_p_in  = 0;
   ring_buffer_p_out = 0;
-  ring_buffer_p_out_old = ring_buffer_p_out;
-//  PauseResumeStatus = 1;
-//  Count = 0;
   
   while(WaveDataLength != 0)
   { 
@@ -645,22 +896,23 @@ void WavePlayBack(uint32_t AudioFreq)
     if (Command_index == 0)
     { 
       /* wait for DMA transfert complete */
-      while(ring_buffer_p_in == ring_buffer_p_out) { }
-      if (ring_buffer_p_out_old != ring_buffer_p_out) {
-        play((uint32_t)ring_buffer[ring_buffer_p_out], _MAX_SS);
-        ring_buffer_p_out_old = ring_buffer_p_out;
-      }
-      f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS, &BytesRead);
+      while (ring_buffer_p_in == ring_buffer_p_out);
+#ifndef MP3
+      f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS * 2, &BytesRead);
+#else
+      f_read (&fileR, ring_buffer[ring_buffer_p_in], MAX_BUFF * 2, &BytesRead); 
+#endif
       ring_buffer_p_in++;
       if (ring_buffer_p_in >= RING_BUF_SIZE) {
         ring_buffer_p_in = 0;
       }
+#ifndef NO_ADC
       if (adcCount == 0) {
         adcCount = 100;
         while(ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
         while(ADC_GetFlagStatus(ADC2, ADC_FLAG_EOC) == RESET);
-        adc1w = ADC_GetConversionValue(ADC1);
-        adc2w = ADC_GetConversionValue(ADC2);
+        adc1w = ADC_GetConversionValue(ADC1) & 0x0fff;
+        adc2w = ADC_GetConversionValue(ADC2) & 0x0fff;
 #ifdef USE_PRINTF
         printf("ADC %d %d\n",adc1w,adc2w);
 #endif
@@ -676,8 +928,10 @@ void WavePlayBack(uint32_t AudioFreq)
         ADC_SoftwareStartConv(ADC2);
       }
       adcCount--;
+#endif
       if (sw_status) {
-        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7) && GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
+        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7) &&
+            GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
           sw_count ++;
           if (sw_count >= 5) {
             sw_status = 0;
@@ -704,25 +958,14 @@ void WavePlayBack(uint32_t AudioFreq)
         }
       } 
     } else {
-//      WavePlayerStop();
       WaveDataLength = 0;
-//      RepeatState =0;
       break;
     }
   }
-  while(ring_buffer_p_in != ring_buffer_p_out_old) {
-   if (ring_buffer_p_out_old != ring_buffer_p_out) {
-     play((uint32_t)ring_buffer[ring_buffer_p_out], _MAX_SS);
-     ring_buffer_p_out_old = ring_buffer_p_out;
-    }
-  }
-//  RepeatState = 0;
-  AudioPlayStart = 0;
-//  WavePlayerStop();
+  while(ring_buffer_p_in != ring_buffer_p_out) {};
 }
 
 uint32_t AudioTotalSize = 0xFFFF; /* This variable holds the total size of the audio file */
-//uint16_t *CurrentPos ;             /* This variable holds the current position of audio pointer */
 
 extern DMA_InitTypeDef DMA_InitStructure; 
 
@@ -738,9 +981,6 @@ void play(uint32_t Addr, uint32_t Size)
   }
 }
 
-#define DMA_MAX_SZE                    0xFFFF
-#define DMA_MAX(x)           (((x) <= DMA_MAX_SZE)? (x):DMA_MAX_SZE)
-
 void DMA1_Stream7_IRQHandler(void)
 {
   /* Transfer complete interrupt */
@@ -748,12 +988,250 @@ void DMA1_Stream7_IRQHandler(void)
   {         
     DMA_Cmd(DMA1_Stream7, DISABLE);   
     DMA_ClearFlag(DMA1_Stream7, DMA_FLAG_TCIF7); 
-    if (WaveDataLength) WaveDataLength -= _MAX_SS;
-    if (WaveDataLength < _MAX_SS) WaveDataLength = 0;
+#ifndef MP3
+    if (WaveDataLength) WaveDataLength -= (_MAX_SS * 2);
+    if (WaveDataLength < (_MAX_SS * 2)) WaveDataLength = 0;
+#else
+    if (WaveDataLength) WaveDataLength -= (MAX_BUFF * 2);
+    if (WaveDataLength < (MAX_BUFF * 2)) WaveDataLength = 0;
+#endif
     ring_buffer_p_out++;
     if (ring_buffer_p_out >= RING_BUF_SIZE) {
       ring_buffer_p_out = 0;
     }
+    if (ring_buffer_p_in != ring_buffer_p_out) {
+#ifndef MP3
+      play((uint32_t)ring_buffer[ring_buffer_p_out], _MAX_SS * 2);
+#else
+      play((uint32_t)ring_buffer[ring_buffer_p_out], MAX_BUFF * 2);
+#endif
+    }
   }
 }
+
+#ifdef MP3
+static inline
+signed int scale(mad_fixed_t sample)
+{
+  sample += 0x01000;
+  if (sample >= 0x10000000)
+    sample = 0x10000000 - 1;
+  else if (sample < -0x10000000)
+    sample = -0x10000000;
+  return sample >> 13;
+}
+
+int f_read_512(uint8_t * buf,int size)
+{
+  UINT r,len;
+  r = 0;
+  while (size > 0) {
+    if (size <= 512) {
+      f_read (&fileR, buf, size, &len);
+      r += len;
+      buf += size; 
+      size -= size;
+    } else {
+      f_read (&fileR, buf, 512, &len); 
+      r += len;
+      buf += 512; 
+      size -= 512;
+    }
+  }
+  return r;
+}
+
+static
+enum mad_flow input(void *data,
+		    struct mad_stream *stream)
+{
+  int i,n;
+  int ii,jj;
+  uint8_t* buf;
+  buf = (uint8_t*)buffer;
+  if (oldFrameSize == 0) {
+    if (f_read_512(buf, defFrameSize + 10) < defFrameSize + 10) {
+      return MAD_FLOW_STOP;
+    }
+  } else if (oldFrameSize == defFrameSize) {
+    for (i = 0;i < 10;i++) {
+      buf[i] = buf[oldFrameSize + i];
+    }
+    if (f_read_512(buf + 10, defFrameSize) < defFrameSize) {
+      return MAD_FLOW_STOP;
+    }
+  } else {
+    for (i = 0;i < 9;i++) {
+      buf[i] = buf[oldFrameSize + i];
+    }
+    if (f_read_512(buf + 9, defFrameSize + 1) < defFrameSize + 1) {
+      return MAD_FLOW_STOP;
+    }
+  }
+  if ((buf[0] == 0xff) && (buf[1] == 0xfb)) {
+    if (buf[2] & 0x02) {
+      n = defFrameSize + 1;
+    } else {
+      n = defFrameSize;
+    }
+
+  } else {
+    n = 1;
+    while((n < defFrameSize) && ((buf[n] != 0xff) || (buf[n+1] != 0xfb))) {
+      n++;
+    }
+#ifdef USE_PRINTF
+    printf("n=%03d:\n",n); 
+	for (ii = 0; ii < n;ii += 16) {
+	  printf("%03d:",ii); 
+	  for (jj = 0;jj < 16;jj++) {
+		printf("%02x ",buf[ii+jj]);
+	  }
+	  for (jj = 0;jj < 16;jj++) {
+        unsigned char cc = buf[ii+jj];
+        if ((cc > 0x20) && (cc < 0x39)) {
+		  printf("%c",cc);
+        } else if ((cc >= 0x40) && (cc < 'Z')) {
+		  printf("%c",cc);
+        } else if ((cc >= 0x60) && (cc < 'z')) {
+		  printf("%c",cc);
+        } else {
+		  printf(".");
+		}
+	  }
+	  printf("\n");
+	}
+#endif
+printf("STOP C\n");
+    return MAD_FLOW_STOP;
+  }
+  oldFrameSize = n;
+  if (n) {
+    mad_stream_buffer(stream, buf, n+8);
+  }
+#ifndef NO_ADC
+  if (adcCount == 0) {
+    adcCount = 100;
+    while(ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
+    while(ADC_GetFlagStatus(ADC2, ADC_FLAG_EOC) == RESET);
+    adc1w = ADC_GetConversionValue(ADC1) & 0x0fff;
+    adc2w = ADC_GetConversionValue(ADC2) & 0x0fff;
+#ifdef USE_PRINTF
+    printf("ADC %d %d\n",adc1w,adc2w);
+#endif
+    if (adc2w >= 2050) {
+      lowVoltage++;
+      if (lowVoltage >= 5) {
+        Command_index = 3;
+      }
+    } else {
+      lowVoltage = 0;
+    }
+    ADC_SoftwareStartConv(ADC1);
+    ADC_SoftwareStartConv(ADC2);
+  }
+  adcCount--;
+  if (Command_index == 3)
+    return MAD_FLOW_STOP;
+#endif
+  if (sw_status) {
+    if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7) &&
+        GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
+      sw_count ++;
+      if (sw_count >= 5) {
+        sw_status = 0;
+        sw_count = 0;
+      }
+    } else {
+      sw_count = 0;
+    }
+  } else {
+    if ((! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7)) || (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8))) {
+      sw_count ++;
+      if (sw_count >= 5) {
+        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_6)) {
+          if (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
+            Command_index = 1;
+          } else {
+            Command_index = 2;
+          }
+        }
+        sw_count = 0;
+      }
+    } else {
+      sw_count = 0;
+    }
+  } 
+  if (Command_index > 0)
+    return MAD_FLOW_STOP;
+  return MAD_FLOW_CONTINUE;
+}
+
+static
+enum mad_flow output(void *data,
+		     struct mad_header const *header,
+		     struct mad_pcm *pcm)
+{
+  unsigned int nsamples;
+  mad_fixed_t const *left_ch, *right_ch;
+
+  nsamples  = pcm->length;
+  left_ch   = pcm->samples[0];
+  right_ch  = pcm->samples[1];
+  unsigned int i;
+  if (nsamples != 1152) {
+    printf("nsamples:%d\n",nsamples);
+  }
+  while ((! mp3FlgFirst) && (ring_buffer_p_in == ring_buffer_p_out));
+  i = 0;
+  while (i < MAX_BUFF) {
+    ring_buffer[ring_buffer_p_in][i++] = scale(*left_ch++);
+    ring_buffer[ring_buffer_p_in][i++] = scale(*right_ch++);
+  }
+  ring_buffer_p_in++;
+  if (ring_buffer_p_in >= RING_BUF_SIZE) {
+    ring_buffer_p_in  = 0;
+    if (mp3FlgFirst) {
+      play((uint32_t)ring_buffer[0], MAX_BUFF * 2);
+      mp3FlgFirst = 0;
+    }
+  }
+  return MAD_FLOW_CONTINUE;
+}
+
+static
+enum mad_flow error(void *data,
+		    struct mad_stream *stream,
+		    struct mad_frame *frame)
+{
+  return MAD_FLOW_CONTINUE;
+}
+
+void Mp3PlayBack(uint32_t AudioFreq)
+{
+  /* Start playing */
+  Command_index = 0;
+  sw_status = 1;
+  sw_count = 0;
+#ifndef NO_ADC
+  adcCount = 0;
+  lowVoltage = 0;
+#endif
+  /* Get Data from SD CARD */
+  f_lseek(&fileR, SpeechDataOffset);
+  oldFrameSize = 0;
+  ring_buffer_p_in  = 0;
+  ring_buffer_p_out = 0;
+  mp3i = 0;
+  mp3FlgFirst = 1;
+
+  struct mad_decoder decoder;
+  mad_decoder_init(&decoder, 0,
+		   input, 0 /* header */, 0 /* filter */, output,
+		   error, 0 /* message */);
+  mad_decoder_run(&decoder, MAD_DECODER_MODE_SYNC);
+  mad_decoder_finish(&decoder);
+  while(ring_buffer_p_in != ring_buffer_p_out) {};
+}
+#endif
 

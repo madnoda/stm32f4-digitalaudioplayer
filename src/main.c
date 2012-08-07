@@ -23,6 +23,7 @@ __IO uint8_t RepeatState = 0;
 void initI2S(void);
 void startI2S(void);
 void setIRQandDMA(void);
+void initADC();
 extern __IO uint8_t Command_index;
 
 
@@ -70,6 +71,9 @@ int main(void)
 #endif
 #endif
 
+/* ADCの初期化 */
+  initADC();
+
 /* I2Sポートの初期化*/
   initI2S();
 /* I2Sポートをスタート */
@@ -83,13 +87,13 @@ int main(void)
       sdio_playNO(n);
       if ((Command_index == 0) || (Command_index == 1)) {
         n++;
-        if (n >= sWAV) {
+        if (n >= sMUSIC) {
           n = 0;
         }
       } else if (Command_index == 2){
         if (n == 0) {
-          if (sWAV > 0) {
-            n = sWAV - 1;
+          if (sMUSIC > 0) {
+            n = sMUSIC - 1;
           } else {
             n = 0;
           }
@@ -99,11 +103,12 @@ int main(void)
       }
     }
   }
+#ifndef NO_ADC
 #ifdef USE_PRINTF
   printf("Low Voltage Stop\n");
 #endif
-
   PWR_EnterSTANDBYMode();
+#endif
 
   while(1) {
   }
@@ -180,7 +185,7 @@ void setIRQandDMA(void)
   DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
   DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_HalfWord; 
   DMA_InitStructure.DMA_Mode = DMA_Mode_Normal;
-  DMA_InitStructure.DMA_Priority = DMA_Priority_High;
+  DMA_InitStructure.DMA_Priority = DMA_Priority_VeryHigh;
   DMA_InitStructure.DMA_FIFOMode = DMA_FIFOMode_Disable;         
   DMA_InitStructure.DMA_FIFOThreshold = DMA_FIFOThreshold_1QuarterFull;
   DMA_InitStructure.DMA_MemoryBurst = DMA_MemoryBurst_Single;
@@ -195,3 +200,47 @@ void setIRQandDMA(void)
   SPI_I2S_DMACmd(SPI3, SPI_I2S_DMAReq_Tx, ENABLE);  
 }
 
+// ADC Init
+void initADC()
+{
+#ifndef NO_ADC
+  GPIO_InitTypeDef      GPIO_InitStructure;
+  ADC_InitTypeDef       ADC_InitStructure;
+  ADC_CommonInitTypeDef ADC_CommonInitStructure;
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC2, ENABLE);
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6|GPIO_Pin_7;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AN;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL ;
+  GPIO_Init(GPIOA, &GPIO_InitStructure);
+  ADC_CommonInitStructure.ADC_Mode = ADC_Mode_Independent;
+  ADC_CommonInitStructure.ADC_Prescaler = ADC_Prescaler_Div6;
+  ADC_CommonInitStructure.ADC_DMAAccessMode = ADC_DMAAccessMode_Disabled;
+  ADC_CommonInitStructure.ADC_TwoSamplingDelay = ADC_TwoSamplingDelay_5Cycles;
+  ADC_CommonInit(&ADC_CommonInitStructure);
+  ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
+  ADC_InitStructure.ADC_ScanConvMode = DISABLE;
+  ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
+  ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
+//  ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_T1_CC1;
+  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
+  ADC_InitStructure.ADC_NbrOfConversion = 1;
+  ADC_Init(ADC1, &ADC_InitStructure);
+  ADC_Cmd(ADC1, ENABLE);
+  ADC_RegularChannelConfig(ADC1, ADC_Channel_7, 1, ADC_SampleTime_3Cycles);
+
+  ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
+  ADC_InitStructure.ADC_ScanConvMode = DISABLE;
+  ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
+  ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
+//  ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_T1_CC1;
+  ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
+  ADC_InitStructure.ADC_NbrOfConversion = 1;
+  ADC_Init(ADC2, &ADC_InitStructure);
+  ADC_Cmd(ADC2, ENABLE);
+  ADC_RegularChannelConfig(ADC2, ADC_Channel_6, 1, ADC_SampleTime_3Cycles);
+  ADC_SoftwareStartConv(ADC1);
+  ADC_SoftwareStartConv(ADC2);
+#endif
+}
