@@ -354,6 +354,7 @@ typedef enum
  extern FIL fileR;
  extern DIR dir;
  void WavePlayBack(uint32_t AudioFreq);
+ void i2s_clockset(uint32_t freq);
 
 #ifdef MP3
  int defFrameSize = 0;
@@ -756,12 +757,12 @@ static ErrorCode Mp3Player_Mp3Parsing(uint32_t *FileLen)
       mp3SampleRate = 44100;
       defFrameSize = 144 * defFrameSize / 44100;
       break;
-    case 0x40:
+    case 0x04:
       printf("48kHz ");
       mp3SampleRate = 48000;
       defFrameSize = 144 * defFrameSize / 48000;
       break;
-    case 0x80:
+    case 0x08:
       printf("32kHz ");
       mp3SampleRate = 32000;
       defFrameSize = 144 * defFrameSize / 32000;
@@ -858,6 +859,7 @@ void play(uint32_t Addr, uint32_t Size);
 
 void WavePlayBack(uint32_t AudioFreq)
 { 
+  i2s_clockset(AudioFreq);
   /* Start playing */
   Command_index = 0;
   sw_status = 1;
@@ -1209,6 +1211,7 @@ enum mad_flow error(void *data,
 
 void Mp3PlayBack(uint32_t AudioFreq)
 {
+  i2s_clockset(AudioFreq);
   /* Start playing */
   Command_index = 0;
   sw_status = 1;
@@ -1234,4 +1237,34 @@ void Mp3PlayBack(uint32_t AudioFreq)
   while(ring_buffer_p_in != ring_buffer_p_out) {};
 }
 #endif
+
+void i2s_clockset(uint32_t freq)
+{
+  static uint32_t old_freq = 44100;
+  if ((old_freq == freq) || ((freq != 44100) && (freq != 48000)))
+    return;
+  old_freq = freq;
+  uint32_t PLLI2S_N = 271;
+  uint32_t PLLI2S_R = 6;
+  if (freq == 48000) {
+    PLLI2S_N = 258;
+    PLLI2S_R = 3;
+  }
+  /* Disable PLLI2S */
+  RCC->CR &= ~((uint32_t)RCC_CR_PLLI2SON);
+  /* PLLI2S clock used as I2S clock source */
+  RCC->CFGR &= ~RCC_CFGR_I2SSRC;
+  /* Configure PLLI2S */
+  RCC->PLLI2SCFGR = (PLLI2S_N << 6) | (PLLI2S_R << 28);
+  /* Enable PLLI2S */
+  RCC->CR |= ((uint32_t)RCC_CR_PLLI2SON);
+  /* Wait till PLLI2S is ready */
+  while((RCC->CR & RCC_CR_PLLI2SRDY) == 0)
+  {
+  }
+  /* I2Sポートをスタート */
+  startI2S();
+  /* IRQの設定とDMAのイネーブル */
+  setIRQandDMA();
+}
 
