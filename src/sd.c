@@ -357,7 +357,7 @@ typedef enum
  void i2s_clockset(uint32_t freq);
 
 #ifdef MP3
- int defFrameSize = 0;
+// int defFrameSize = 0;
  int oldFrameSize = 0;
  void Mp3PlayBack(uint32_t AudioFreq);
  uint32_t  mp3SampleRate;
@@ -693,59 +693,45 @@ static ErrorCode Mp3Player_Mp3Parsing(uint32_t *FileLen)
       break;
     case 0x10:
       printf("32kbps ");
-      defFrameSize = 32000;
       break;
     case 0x20:
       printf("40kbps ");
-      defFrameSize = 40000;
       break;
     case 0x30:
       printf("48kbps ");
-      defFrameSize = 48000;
       break;
     case 0x40:
       printf("56kbps ");
-      defFrameSize = 56000;
       break;
     case 0x50:
       printf("64kbps ");
-      defFrameSize = 64000;
       break;
     case 0x60:
       printf("80kbps ");
-      defFrameSize = 80000;
       break;
     case 0x70:
       printf("96kbps ");
-      defFrameSize = 96000;
       break;
     case 0x80:
       printf("112kbps ");
-      defFrameSize = 112000;
       break;
     case 0x90:
       printf("128kbps ");
-      defFrameSize = 128000;
       break;
     case 0xa0:
-      printf("120kbps ");
-      defFrameSize = 120000;
+      printf("160kbps ");
       break;
     case 0xb0:
       printf("192kbps ");
-      defFrameSize = 192000;
       break;
     case 0xc0:
       printf("224kbps ");
-      defFrameSize = 224000;
       break;
     case 0xd0:
       printf("256kbps ");
-      defFrameSize = 256000;
       break;
     case 0xe0:
       printf("320kbps ");
-      defFrameSize = 320000;
       break;
     default:
       printf("%02x\n",buf[2] & 0xf0);
@@ -755,82 +741,27 @@ static ErrorCode Mp3Player_Mp3Parsing(uint32_t *FileLen)
     case 0x00:
       printf("44.1kHz ");
       mp3SampleRate = 44100;
-      defFrameSize = 144 * defFrameSize / 44100;
       break;
     case 0x04:
       printf("48kHz ");
       mp3SampleRate = 48000;
-      defFrameSize = 144 * defFrameSize / 48000;
       break;
     case 0x08:
       printf("32kHz ");
       mp3SampleRate = 32000;
-      defFrameSize = 144 * defFrameSize / 32000;
       break;
   }
   printf("\n");
-  printf("Frame Size:%d\n",defFrameSize);
 #else
-  switch (buf[2] & 0xf0) {
-    case 0x00:
-      break;
-    case 0x10:
-      defFrameSize = 32000;
-      break;
-    case 0x20:
-      defFrameSize = 40000;
-      break;
-    case 0x30:
-      defFrameSize = 48000;
-      break;
-    case 0x40:
-      defFrameSize = 56000;
-      break;
-    case 0x50:
-      defFrameSize = 64000;
-      break;
-    case 0x60:
-      defFrameSize = 80000;
-      break;
-    case 0x70:
-      defFrameSize = 96000;
-      break;
-    case 0x80:
-      defFrameSize = 112000;
-      break;
-    case 0x90:
-      defFrameSize = 128000;
-      break;
-    case 0xa0:
-      defFrameSize = 120000;
-      break;
-    case 0xb0:
-      defFrameSize = 192000;
-      break;
-    case 0xc0:
-      defFrameSize = 224000;
-      break;
-    case 0xd0:
-      defFrameSize = 256000;
-      break;
-    case 0xe0:
-      defFrameSize = 320000;
-      break;
-    default:
-      break;
-  }
   switch (buf[2] & 0x0c) {
     case 0x00:
       mp3SampleRate = 44100;
-      defFrameSize = 144 * defFrameSize / 44100;
       break;
     case 0x40:
       mp3SampleRate = 48000;
-      defFrameSize = 144 * defFrameSize / 48000;
       break;
     case 0x80:
       mp3SampleRate = 32000;
-      defFrameSize = 144 * defFrameSize / 32000;
       break;
   }
 #endif
@@ -1047,68 +978,93 @@ static
 enum mad_flow input(void *data,
 		    struct mad_stream *stream)
 {
-  int i,n;
-  int ii,jj;
   uint8_t* buf;
   buf = (uint8_t*)buffer;
+  int i,n;
+  static int work = 0;
+  static uint8_t oldB2 = 0;
   if (oldFrameSize == 0) {
-    if (f_read_512(buf, defFrameSize + 10) < defFrameSize + 10) {
+    if (f_read_512(buf, 10) < 10) {
       return MAD_FLOW_STOP;
     }
-  } else if (oldFrameSize == defFrameSize) {
+  } else {
     for (i = 0;i < 10;i++) {
       buf[i] = buf[oldFrameSize + i];
     }
-    if (f_read_512(buf + 10, defFrameSize) < defFrameSize) {
-      return MAD_FLOW_STOP;
+  }
+  if ((buf[2] & 0xfc) != oldB2) {
+    oldB2 = buf[2] & 0xfc;
+    switch (buf[2] & 0xf0) {
+      case 0x10:
+        work = 32000;
+        break;
+      case 0x20:
+        work = 40000;
+        break;
+      case 0x30:
+        work = 48000;
+        break;
+      case 0x40:
+        work = 56000;
+        break;
+      case 0x50:
+        work = 64000;
+        break;
+      case 0x60:
+        work = 80000;
+        break;
+      case 0x70:
+        work = 96000;
+        break;
+      case 0x80:
+        work = 112000;
+        break;
+      case 0x90:
+        work = 128000;
+        break;
+      case 0xa0:
+        work = 160000;
+        break;
+      case 0xb0:
+        work = 192000;
+        break;
+      case 0xc0:
+        work = 224000;
+        break;
+      case 0xd0:
+        work = 256000;
+        break;
+      case 0xe0:
+        work = 320000;
+        break;
+      default:
+        return MAD_FLOW_STOP;
     }
-  } else {
-    for (i = 0;i < 9;i++) {
-      buf[i] = buf[oldFrameSize + i];
-    }
-    if (f_read_512(buf + 9, defFrameSize + 1) < defFrameSize + 1) {
-      return MAD_FLOW_STOP;
+    switch (buf[2] & 0x0c) {
+      case 0x00:
+        work = 144 * work / 44100;
+        break;
+      case 0x04:
+        work = 144 * work / 48000;
+        break;
+      case 0x08:
+        work = 144 * work / 32000;
+        break;
+      default :
+        return MAD_FLOW_STOP;
     }
   }
-  if ((buf[0] == 0xff) && (buf[1] == 0xfb)) {
-    if (buf[2] & 0x02) {
-      n = defFrameSize + 1;
-    } else {
-      n = defFrameSize;
-    }
-
+  if (buf[2] & 0x02) {
+    n = work + 1;
   } else {
-    n = 1;
-    while((n < defFrameSize) && ((buf[n] != 0xff) || (buf[n+1] != 0xfb))) {
-      n++;
-    }
-#ifdef USE_PRINTF
-    printf("n=%03d:\n",n); 
-	for (ii = 0; ii < n;ii += 16) {
-	  printf("%03d:",ii); 
-	  for (jj = 0;jj < 16;jj++) {
-		printf("%02x ",buf[ii+jj]);
-	  }
-	  for (jj = 0;jj < 16;jj++) {
-        unsigned char cc = buf[ii+jj];
-        if ((cc > 0x20) && (cc < 0x39)) {
-		  printf("%c",cc);
-        } else if ((cc >= 0x40) && (cc < 'Z')) {
-		  printf("%c",cc);
-        } else if ((cc >= 0x60) && (cc < 'z')) {
-		  printf("%c",cc);
-        } else {
-		  printf(".");
-		}
-	  }
-	  printf("\n");
-	}
-#endif
-printf("STOP C\n");
+    n = work;
+  }
+  if (f_read_512(buf + 10, n) < n) {
     return MAD_FLOW_STOP;
   }
   oldFrameSize = n;
   if (n) {
+// なぜか、8バイト余計にするだけで、ちゃんとWAVファイルになる。
     mad_stream_buffer(stream, buf, n+8);
   }
 #ifndef NO_ADC
