@@ -21,7 +21,7 @@
 __IO uint8_t RepeatState = 0;
 
 void initI2S(void);
-void startI2S(void);
+void startI2S(uint32_t AudioFreq,uint32_t AudioBit);
 void setIRQandDMA(void);
 void initADC();
 extern __IO uint8_t Command_index;
@@ -49,6 +49,16 @@ int main(void)
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
   GPIO_Init(GPIOB, &GPIO_InitStructure);
+/* FN1242 DAC コントロール用のPC4-6の設定 */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_4 |GPIO_Pin_5 |GPIO_Pin_6;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_Init(GPIOC, &GPIO_InitStructure);
+  GPIO_ResetBits(GPIOC,GPIO_Pin_4 | GPIO_Pin_5); // MC <= 0 MD <= 0
+  GPIO_SetBits(GPIOC,GPIO_Pin_6);   // ML <= 1
 
 #ifdef USE_USART
   conio_init(UART_DEFAULT_NUM,UART_BAUDLATE);
@@ -77,7 +87,7 @@ int main(void)
 /* I2Sポートの初期化*/
   initI2S();
 /* I2Sポートをスタート */
-  startI2S();
+  startI2S(44100,16);
 
 /* IRQの設定とDMAのイネーブル */
   setIRQandDMA();
@@ -149,16 +159,21 @@ void initI2S(void)
   GPIO_PinAFConfig(GPIOC, GPIO_PinSource7, GPIO_AF_SPI3); 
 }
 
-void startI2S(void)
+void startI2S(uint32_t AudioFreq,uint32_t AudioBit)
 {
   I2S_InitTypeDef I2S_InitStructure;
   /* Enable the CODEC_I2S peripheral clock */
   RCC_APB1PeriphClockCmd(RCC_APB1Periph_SPI3, ENABLE);
   /* CODEC_I2S peripheral configuration */
   SPI_I2S_DeInit(SPI3);
-  I2S_InitStructure.I2S_AudioFreq = 48000;
+  I2S_InitStructure.I2S_AudioFreq = AudioFreq;
   I2S_InitStructure.I2S_Standard = I2S_Standard_Phillips;
-  I2S_InitStructure.I2S_DataFormat = I2S_DataFormat_16b;
+  if (AudioBit == 16) {
+    I2S_InitStructure.I2S_DataFormat = I2S_DataFormat_16b;
+  } else {
+    I2S_InitStructure.I2S_DataFormat = I2S_DataFormat_24b;
+  }
+//  I2S_InitStructure.I2S_DataFormat = I2S_DataFormat_32b;
   I2S_InitStructure.I2S_CPOL = I2S_CPOL_Low;
   I2S_InitStructure.I2S_Mode = I2S_Mode_MasterTx;
   I2S_InitStructure.I2S_MCLKOutput = I2S_MCLKOutput_Enable;
@@ -231,6 +246,7 @@ void initADC()
   ADC_RegularChannelConfig(ADC1, ADC_Channel_7, 1, ADC_SampleTime_3Cycles);
 
   ADC_InitStructure.ADC_Resolution = ADC_Resolution_12b;
+
   ADC_InitStructure.ADC_ScanConvMode = DISABLE;
   ADC_InitStructure.ADC_ContinuousConvMode = DISABLE;
   ADC_InitStructure.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;

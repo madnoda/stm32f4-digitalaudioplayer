@@ -1,4 +1,5 @@
 #include "integer.h"
+#include "math.h"
 
 #ifdef USE_USART
 #include "uart_support.h"
@@ -27,7 +28,7 @@
 #include "frame.h"
 #include "synth.h"
 #include "decoder.h"
-#define MAX_BUFF 2304
+#define MAX_BUFF 2304 // <= 1152 * 2
 #endif
 
 DWORD acc_size;
@@ -338,7 +339,7 @@ typedef enum
 #ifndef MP3
  uint16_t buffer[_MAX_SS] ={0x00};
  #define RING_BUF_SIZE 4
- uint16_t ring_buffer[RING_BUF_SIZE][_MAX_SS] ={0x00};
+ uint16_t ring_buffer[RING_BUF_SIZE][_MAX_SS];
  volatile uint8_t ring_buffer_p_in  = 0;
  volatile uint8_t ring_buffer_p_out = 0;
 #else
@@ -347,17 +348,17 @@ typedef enum
  uint16_t ring_buffer[RING_BUF_SIZE][MAX_BUFF];
  volatile uint8_t ring_buffer_p_in  = 0;
  volatile uint8_t ring_buffer_p_out = 0;
+ int ring_buffer_sub_p = 0;
 #endif
  static __IO uint32_t SpeechDataOffset = 0x00;
  UINT BytesRead;
  WAVE_FormatTypeDef WAVE_Format;
  extern FIL fileR;
  extern DIR dir;
- void WavePlayBack(uint32_t AudioFreq);
- void i2s_clockset(uint32_t freq);
+ void WavePlayBack(uint32_t AudioFreq,uint32_t AudioBit);
+ int i2s_clockset(uint32_t AudioFreq,uint32_t AudioBit);
 
 #ifdef MP3
-// int defFrameSize = 0;
  int oldFrameSize = 0;
  void Mp3PlayBack(uint32_t AudioFreq);
  uint32_t  mp3SampleRate;
@@ -460,8 +461,7 @@ void sdio_play(char * filename)
         printf("Time : %0.1f sec\n",((double)WaveDataLength) / ((double)WAVE_Format.ByteRate));
 #endif
         /* Play the wave */
-        if (WAVE_Format.BitsPerSample == 16)
-          WavePlayBack(WAVE_Format.SampleRate);
+        WavePlayBack(WAVE_Format.SampleRate,WAVE_Format.BitsPerSample);
       } else {
 #ifdef MP3
         WaveFileStatus = Mp3Player_Mp3Parsing(&wavelen);
@@ -541,7 +541,7 @@ int SetSmallBuffer(unsigned long p,int i)
   }
 }
 
-int CmpSmallBuffer(unsigned long p,const unsigned char *b)
+int CmpSmallBuffer(unsigned long p,char *b)
 {
   int i = 0;
   while(b[i]) {
@@ -556,6 +556,23 @@ int CmpSmallBuffer(unsigned long p,const unsigned char *b)
     i++;
   }
   return 1;
+}
+
+int CmpSmallChunkList(unsigned long p)
+{
+  if (CmpSmallBuffer(p,"str2")) return 1;
+  if (CmpSmallBuffer(p,"bmrk")) return 1;
+  if (CmpSmallBuffer(p,"dtbt")) return 1;
+  if (CmpSmallBuffer(p,"acid")) return 1;
+  if (CmpSmallBuffer(p,"strc")) return 1;
+  if (CmpSmallBuffer(p,"LIST")) return 1;
+  if (CmpSmallBuffer(p,"ICRD")) return 1;
+  if (CmpSmallBuffer(p,"PAD ")) return 1;
+  if (CmpSmallBuffer(p,"bext")) return 1;
+  if (CmpSmallBuffer(p,"minf")) return 1;
+  if (CmpSmallBuffer(p,"elm1")) return 1;
+  if (CmpSmallBuffer(p,"JUNK")) return 1;
+  return 0;
 }
 
 unsigned long ReadSmallBufferULONG(unsigned long p)
@@ -583,7 +600,6 @@ unsigned long ReadSmallBufferUSHORT(unsigned long p)
 static ErrorCode WavePlayer_WaveParsing(uint32_t *FileLen)
 {
   uint32_t temp = 0x00;
-  uint32_t extraformatbytes = 0;
   small_buffer_pointer = -1;
   if (! CmpSmallBuffer(0,"RIFF")) {
     return(Unvalid_RIFF_ID);
@@ -592,45 +608,43 @@ static ErrorCode WavePlayer_WaveParsing(uint32_t *FileLen)
   if (! CmpSmallBuffer(8,"WAVE")) {
     return(Unvalid_WAVE_Format);
   }
-  temp = ReadSmallBufferULONG(16);
-  if (temp != 0x10) {
-    extraformatbytes = 1;
+  int p = 12;
+  while (CmpSmallChunkList(p)) {
+    p += 4;
+    temp = ReadSmallBufferULONG(p) + 4;
+    p += temp;
   }
-  WAVE_Format.FormatTag = ReadSmallBufferUSHORT(20);
+  if (! CmpSmallBuffer(p,"fmt ")) {
+    SetSmallBuffer(p,4);
+    printf("Error Chunk_ID is \"%c%c%c%c\"\n",small_buffer[p - small_buffer_pointer],small_buffer[p - small_buffer_pointer + 1],small_buffer[p - small_buffer_pointer + 2],small_buffer[p - small_buffer_pointer + 3]);
+    return(Unvalid_FactChunk_ID);
+  } else {
+    temp = ReadSmallBufferULONG(p + 4);
+  }
+  WAVE_Format.FormatTag = ReadSmallBufferUSHORT(p + 8);
   if (WAVE_Format.FormatTag != 0x01) {
       return(Unsupporetd_FormatTag);
   }
-  WAVE_Format.NumChannels = ReadSmallBufferUSHORT(22);
-  WAVE_Format.SampleRate = ReadSmallBufferULONG(24);
-  WAVE_Format.ByteRate = ReadSmallBufferULONG(28);
-  WAVE_Format.BlockAlign = ReadSmallBufferUSHORT(32);
-  WAVE_Format.BitsPerSample = ReadSmallBufferUSHORT(34);
-  if ((WAVE_Format.BitsPerSample != 16) && (WAVE_Format.BitsPerSample != 24)) {
+  WAVE_Format.NumChannels = ReadSmallBufferUSHORT(p + 10);
+  WAVE_Format.SampleRate = ReadSmallBufferULONG(p + 12);
+  WAVE_Format.ByteRate = ReadSmallBufferULONG(p + 16);
+  WAVE_Format.BlockAlign = ReadSmallBufferUSHORT(p + 20);
+  WAVE_Format.BitsPerSample = ReadSmallBufferUSHORT(p + 22);
+  if ((WAVE_Format.BitsPerSample !=16) && (WAVE_Format.BitsPerSample !=24)) {
     return(Unsupporetd_Bits_Per_Sample);
   }
-  SpeechDataOffset = 36;
-  if (extraformatbytes == 1) {
-    temp = ReadSmallBufferUSHORT(36);
-    if (temp != 0x00) {
-        return(Unsupporetd_ExtraFormatBytes);
-    }
-    if (! CmpSmallBuffer(38,"fmt ")) {
-        return(Unvalid_FactChunk_ID);
-    }
-    temp = ReadSmallBufferULONG(42);
-    SpeechDataOffset += 10 + temp;
+  p += (temp + 8);
+  while (CmpSmallChunkList(p)) {
+    p += 4;
+    temp = ReadSmallBufferULONG(p) + 4;
+    p += temp;
   }
-  while (CmpSmallBuffer(SpeechDataOffset,"LIST") || CmpSmallBuffer(SpeechDataOffset,"PAD ")) {
-    SpeechDataOffset += 4;
-    temp = ReadSmallBufferULONG(SpeechDataOffset);
-    printf("LIST_ID %ld\n",temp);
-    SpeechDataOffset += temp;
-    SpeechDataOffset += 4;
-    printf("NEXT %lx\n",SpeechDataOffset);
-  }
-  if (! CmpSmallBuffer(SpeechDataOffset,"data")) {
+  if (! CmpSmallBuffer(p,"data")) {
+    SetSmallBuffer(p,4);
+    printf("Unvalid_DataChunk_ID is \"%c%c%c%c\"\n",small_buffer[p - small_buffer_pointer],small_buffer[p - small_buffer_pointer + 1],small_buffer[p - small_buffer_pointer + 2],small_buffer[p - small_buffer_pointer + 3]);
     return(Unvalid_DataChunk_ID);
   }
+  SpeechDataOffset = p;
   SpeechDataOffset += 4;
   WAVE_Format.DataSize = ReadSmallBufferULONG(SpeechDataOffset);
   SpeechDataOffset += 4;
@@ -687,82 +701,167 @@ static ErrorCode Mp3Player_Mp3Parsing(uint32_t *FileLen)
   } else {
     printf("NoERRbit\n");
   }
-  switch (buf[2] & 0xf0) {
-    case 0x00:
-      printf("FreeFormat ");
-      break;
-    case 0x10:
-      printf("32kbps ");
-      break;
-    case 0x20:
-      printf("40kbps ");
-      break;
-    case 0x30:
-      printf("48kbps ");
-      break;
-    case 0x40:
-      printf("56kbps ");
-      break;
-    case 0x50:
-      printf("64kbps ");
-      break;
-    case 0x60:
-      printf("80kbps ");
-      break;
-    case 0x70:
-      printf("96kbps ");
-      break;
-    case 0x80:
-      printf("112kbps ");
-      break;
-    case 0x90:
-      printf("128kbps ");
-      break;
-    case 0xa0:
-      printf("160kbps ");
-      break;
-    case 0xb0:
-      printf("192kbps ");
-      break;
-    case 0xc0:
-      printf("224kbps ");
-      break;
-    case 0xd0:
-      printf("256kbps ");
-      break;
-    case 0xe0:
-      printf("320kbps ");
-      break;
-    default:
-      printf("%02x\n",buf[2] & 0xf0);
-      break;
+  if (buf[1] & 0x08) {
+    switch (buf[2] & 0xf0) {
+      case 0x00:
+        printf("FreeFormat ");
+        break;
+      case 0x10:
+        printf("32kbps ");
+        break;
+      case 0x20:
+        printf("40kbps ");
+        break;
+      case 0x30:
+        printf("48kbps ");
+        break;
+      case 0x40:
+        printf("56kbps ");
+        break;
+      case 0x50:
+        printf("64kbps ");
+        break;
+      case 0x60:
+        printf("80kbps ");
+        break;
+      case 0x70:
+        printf("96kbps ");
+        break;
+      case 0x80:
+        printf("112kbps ");
+        break;
+      case 0x90:
+        printf("128kbps ");
+        break;
+      case 0xa0:
+        printf("160kbps ");
+        break;
+      case 0xb0:
+        printf("192kbps ");
+        break;
+      case 0xc0:
+        printf("224kbps ");
+        break;
+      case 0xd0:
+        printf("256kbps ");
+        break;
+      case 0xe0:
+        printf("320kbps ");
+        break;
+      default:
+        printf("%02x\n",buf[2] & 0xf0);
+        break;
+    }
+  } else {
+    switch (buf[2] & 0xf0) {
+      case 0x00:
+        printf("FreeFormat ");
+        break;
+      case 0x10:
+        printf("8kbps ");
+        break;
+      case 0x20:
+        printf("16kbps ");
+        break;
+      case 0x30:
+        printf("24kbps ");
+        break;
+      case 0x40:
+        printf("32kbps ");
+        break;
+      case 0x50:
+        printf("40kbps ");
+        break;
+      case 0x60:
+        printf("48kbps ");
+        break;
+      case 0x70:
+        printf("56kbps ");
+        break;
+      case 0x80:
+        printf("64kbps ");
+        break;
+      case 0x90:
+        printf("80kbps ");
+        break;
+      case 0xa0:
+        printf("96kbps ");
+        break;
+      case 0xb0:
+//        printf("64kbps ??");
+        printf("112kbps ??");
+        break;
+      case 0xc0:
+        printf("128kbps ");
+        break;
+      case 0xd0:
+        printf("144kbps ");
+        break;
+      case 0xe0:
+        printf("160kbps ");
+        break;
+      default:
+        printf("%02x\n",buf[2] & 0xf0);
+        break;
+    }
   }
-  switch (buf[2] & 0x0c) {
-    case 0x00:
-      printf("44.1kHz ");
-      mp3SampleRate = 44100;
-      break;
-    case 0x04:
-      printf("48kHz ");
-      mp3SampleRate = 48000;
-      break;
-    case 0x08:
-      printf("32kHz ");
-      mp3SampleRate = 32000;
-      break;
+  if (buf[1] & 0x08) {
+    switch (buf[2] & 0x0c) {
+      case 0x00:
+        printf("44.1kHz ");
+        mp3SampleRate = 44100;
+        break;
+      case 0x04:
+        printf("48kHz ");
+        mp3SampleRate = 48000;
+        break;
+      case 0x08:
+        printf("32kHz ");
+        mp3SampleRate = 32000;
+        break;
+    }
+  } else {
+    switch (buf[2] & 0x0c) {
+      case 0x00:
+        printf("22.05kHz ");
+        mp3SampleRate = 22050;
+        break;
+      case 0x04:
+        printf("24kHz ");
+        mp3SampleRate = 24000;
+        break;
+      case 0x08:
+        printf("16kHz ");
+        mp3SampleRate = 16000;
+        break;
+    }
   }
   printf("\n");
 #else
-  switch (buf[2] & 0x0c) {
-    case 0x00:
-      mp3SampleRate = 44100;
-      break;
-    case 0x40:
-      mp3SampleRate = 48000;
-      break;
-    case 0x80:
-      mp3SampleRate = 32000;
-      break;
+  if (buf[1] & 0x08) {
+    switch (buf[2] & 0x0c) {
+      case 0x00:
+        mp3SampleRate = 44100;
+        break;
+      case 0x04:
+        mp3SampleRate = 48000;
+        break;
+      case 0x08:
+        mp3SampleRate = 32000;
+        break;
+    }
+  } else {
+    switch (buf[2] & 0x0c) {
+      case 0x00:
+        mp3SampleRate = 22050;
+        break;
+      case 0x04:
+        mp3SampleRate = 24000;
+        break;
+      case 0x08:
+        mp3SampleRate = 16000;
+        break;
+    }
   }
 #endif
   return(Valid_WAVE_File);
@@ -786,17 +885,50 @@ uint32_t ReadUnit(uint8_t *buffer, uint8_t idx, uint8_t NbrOfBytes, Endianness B
   return temp;
 }
 
-void play(uint32_t Addr, uint32_t Size);
+void setDAC(uint32_t AudioFreq,uint32_t AudioBit)
+{
+  uint16_t work = 0;
+  int i;
+  work |= 0x1000;		// MODE2
+  if (AudioBit == 24)
+    work |= 0x0080;		// 24bit
+  if (AudioFreq == 44100)
+    work |= 0x0001;		// 44.1kHz
+  else if (AudioFreq == 48000)
+    work |= 0x0002;		// 48kHz
+  else
+    work |= 0x0003;		// ect
+  for (i = 0;i < 16;i++) {
+    GPIO_ResetBits(GPIOC,GPIO_Pin_4); // MC <= 0
+    if (work & 0x8000) {
+      GPIO_SetBits(GPIOC,GPIO_Pin_5); // MD <= 1
+    } else {
+      GPIO_ResetBits(GPIOC,GPIO_Pin_5); // MD <= 0
 
-void WavePlayBack(uint32_t AudioFreq)
-{ 
-  i2s_clockset(AudioFreq);
+    }
+    GPIO_SetBits(GPIOC,GPIO_Pin_4); // MC <= 1
+    work = work << 1;
+  }
+  GPIO_ResetBits(GPIOC,GPIO_Pin_4); // MC <= 0
+  GPIO_ResetBits(GPIOC,GPIO_Pin_6); // ML <= 0
+  GPIO_SetBits(GPIOC,GPIO_Pin_6);   // ML <= 1
+}
+
+void play(uint32_t Addr, uint32_t Size);
+uint32_t old_bit = 16;
+
+void WavePlayBack(uint32_t AudioFreq,uint32_t AudioBit)
+{
+#ifndef W96K
+  if (AudioFreq == 96000) return;
+#endif
+  if (! i2s_clockset(AudioFreq,AudioBit)) return;
+  setDAC(AudioFreq,AudioBit);
+
   /* Start playing */
   Command_index = 0;
   sw_status = 1;
   sw_count = 0;
-//  int i;
-//  short r,l;
 #ifndef NO_ADC
   adcCount = 0;
   lowVoltage = 0;
@@ -805,11 +937,45 @@ void WavePlayBack(uint32_t AudioFreq)
   f_lseek(&fileR, WaveCounter);
   ring_buffer_p_in  = 0;
   ring_buffer_p_out = 0;
+#ifdef MP3
+  ring_buffer_sub_p = 0;
+#endif
   while (ring_buffer_p_in < RING_BUF_SIZE) {
 #ifndef MP3
-    f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS * 2, &BytesRead); 
+    if (old_bit == 16) {
+      f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS * 2, &BytesRead);
+    } else {
+      uint8_t* buf;
+      buf = (uint8_t*)buffer;
+      f_read (&fileR, buffer, _MAX_SS * 3 / 2, &BytesRead); 
+      uint8_t* b;
+      b = (uint8_t*)(ring_buffer[ring_buffer_p_in]);
+      int j = 0;
+      for (int i = 0;i < _MAX_SS * 2;i += 4) {
+        b[i+3] = buf[j++]; // 7-0
+        b[i+0] = buf[j++]; // 15-8
+
+        b[i+1] = buf[j++]; // 23-16
+        b[i+2] = 0;
+      }
+    }
 #else
-    f_read (&fileR, ring_buffer[ring_buffer_p_in], MAX_BUFF * 2, &BytesRead);
+    if (old_bit == 16) {
+      f_read (&fileR, ring_buffer[ring_buffer_p_in], MAX_BUFF * 2, &BytesRead);
+    } else {
+      uint8_t* buf;
+      buf = (uint8_t*)buffer;
+      f_read (&fileR, buffer, MAX_BUFF * 3 / 2, &BytesRead); 
+      uint8_t* b;
+      b = (uint8_t*)(ring_buffer[ring_buffer_p_in]);
+      int j = 0;
+      for (int i = 0;i < MAX_BUFF * 2;i += 4) {
+        b[i+3] = buf[j++]; // 7-0
+        b[i+0] = buf[j++]; // 15-8
+        b[i+1] = buf[j++]; // 23-16
+        b[i+2] = 0;
+      }
+    }
 #endif 
     ring_buffer_p_in++;
   }
@@ -831,9 +997,39 @@ void WavePlayBack(uint32_t AudioFreq)
       /* wait for DMA transfert complete */
       while (ring_buffer_p_in == ring_buffer_p_out);
 #ifndef MP3
-      f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS * 2, &BytesRead);
+      if (old_bit == 16) {
+        f_read (&fileR, ring_buffer[ring_buffer_p_in], _MAX_SS * 2, &BytesRead);
+      } else {
+        uint8_t* buf;
+        buf = (uint8_t*)buffer;
+        f_read (&fileR, buffer, _MAX_SS * 3 / 2, &BytesRead); 
+        uint8_t* b;
+        b = (uint8_t*)(ring_buffer[ring_buffer_p_in]);
+        int j = 0;
+        for (int i = 0;i < _MAX_SS * 2;i += 4) {
+          b[i+3] = buf[j++]; // 7-0
+          b[i+0] = buf[j++]; // 15-8
+          b[i+1] = buf[j++]; // 23-16
+          b[i+2] = 0;
+        }
+      }
 #else
-      f_read (&fileR, ring_buffer[ring_buffer_p_in], MAX_BUFF * 2, &BytesRead); 
+      if (old_bit == 16) {
+        f_read (&fileR, ring_buffer[ring_buffer_p_in], MAX_BUFF * 2, &BytesRead);
+      } else {
+        uint8_t* buf;
+        buf = (uint8_t*)buffer;
+        f_read (&fileR, buffer, MAX_BUFF * 3 / 2, &BytesRead); 
+        uint8_t* b;
+        b = (uint8_t*)(ring_buffer[ring_buffer_p_in]);
+        int j = 0;
+        for (int i = 0;i < MAX_BUFF * 2;i += 4) {
+          b[i+3] = buf[j++]; // 7-0
+          b[i+0] = buf[j++]; // 15-8
+          b[i+1] = buf[j++]; // 23-16
+          b[i+2] = 0;
+        }
+      }
 #endif
       ring_buffer_p_in++;
       if (ring_buffer_p_in >= RING_BUF_SIZE) {
@@ -921,13 +1117,6 @@ void DMA1_Stream7_IRQHandler(void)
   {         
     DMA_Cmd(DMA1_Stream7, DISABLE);   
     DMA_ClearFlag(DMA1_Stream7, DMA_FLAG_TCIF7); 
-#ifndef MP3
-    if (WaveDataLength) WaveDataLength -= (_MAX_SS * 2);
-    if (WaveDataLength < (_MAX_SS * 2)) WaveDataLength = 0;
-#else
-    if (WaveDataLength) WaveDataLength -= (MAX_BUFF * 2);
-    if (WaveDataLength < (MAX_BUFF * 2)) WaveDataLength = 0;
-#endif
     ring_buffer_p_out++;
     if (ring_buffer_p_out >= RING_BUF_SIZE) {
       ring_buffer_p_out = 0;
@@ -937,6 +1126,23 @@ void DMA1_Stream7_IRQHandler(void)
       play((uint32_t)ring_buffer[ring_buffer_p_out], _MAX_SS * 2);
 #else
       play((uint32_t)ring_buffer[ring_buffer_p_out], MAX_BUFF * 2);
+#endif
+    }
+    if (old_bit == 16) {
+#ifndef MP3
+      if (WaveDataLength) WaveDataLength -= (_MAX_SS * 2);
+      if (WaveDataLength < (_MAX_SS * 2)) WaveDataLength = 0;
+#else
+      if (WaveDataLength) WaveDataLength -= (MAX_BUFF * 2);
+      if (WaveDataLength < (MAX_BUFF * 2)) WaveDataLength = 0;
+#endif
+    } else {
+#ifndef MP3
+      if (WaveDataLength) WaveDataLength -= (_MAX_SS * 3 / 2);
+      if (WaveDataLength < (_MAX_SS * 3 / 2)) WaveDataLength = 0;
+#else
+      if (WaveDataLength) WaveDataLength -= (MAX_BUFF * 3 / 2);
+      if (WaveDataLength < (MAX_BUFF * 3 / 2)) WaveDataLength = 0;
 #endif
     }
   }
@@ -994,64 +1200,126 @@ enum mad_flow input(void *data,
   }
   if ((buf[2] & 0xfc) != oldB2) {
     oldB2 = buf[2] & 0xfc;
-    switch (buf[2] & 0xf0) {
-      case 0x10:
-        work = 32000;
-        break;
-      case 0x20:
-        work = 40000;
-        break;
-      case 0x30:
-        work = 48000;
-        break;
-      case 0x40:
-        work = 56000;
-        break;
-      case 0x50:
-        work = 64000;
-        break;
-      case 0x60:
-        work = 80000;
-        break;
-      case 0x70:
-        work = 96000;
-        break;
-      case 0x80:
-        work = 112000;
-        break;
-      case 0x90:
-        work = 128000;
-        break;
-      case 0xa0:
-        work = 160000;
-        break;
-      case 0xb0:
-        work = 192000;
-        break;
-      case 0xc0:
-        work = 224000;
-        break;
-      case 0xd0:
-        work = 256000;
-        break;
-      case 0xe0:
-        work = 320000;
-        break;
-      default:
-        return MAD_FLOW_STOP;
+    if (buf[1] & 0x08) {
+      switch (buf[2] & 0xf0) {
+        case 0x10:
+          work = 32000;
+          break;
+        case 0x20:
+          work = 40000;
+          break;
+        case 0x30:
+          work = 48000;
+          break;
+        case 0x40:
+          work = 56000;
+          break;
+        case 0x50:
+          work = 64000;
+          break;
+        case 0x60:
+          work = 80000;
+          break;
+        case 0x70:
+          work = 96000;
+          break;
+        case 0x80:
+          work = 112000;
+          break;
+        case 0x90:
+          work = 128000;
+          break;
+        case 0xa0:
+          work = 160000;
+          break;
+        case 0xb0:
+          work = 192000;
+          break;
+        case 0xc0:
+          work = 224000;
+          break;
+        case 0xd0:
+          work = 256000;
+          break;
+        case 0xe0:
+          work = 320000;
+          break;
+      }
+    } else {
+      switch (buf[2] & 0xf0) {
+        case 0x10:
+          work = 8000;
+          break;
+        case 0x20:
+          work = 16000;
+          break;
+        case 0x30:
+          work = 24000;
+          break;
+        case 0x40:
+          work = 32000;
+          break;
+        case 0x50:
+          work = 40000;
+          break;
+        case 0x60:
+          work = 48000;
+          break;
+        case 0x70:
+          work = 56000;
+          break;
+        case 0x80:
+          work = 64000;
+          break;
+        case 0x90:
+          work = 80000;
+          break;
+        case 0xa0:
+          work = 96000;
+          break;
+        case 0xb0:
+//          work = 64000; // ??
+          work = 112000; // ??
+          break;
+        case 0xc0:
+          work = 128000;
+          break;
+        case 0xd0:
+          work = 144000;
+          break;
+        case 0xe0:
+          work = 160000;
+          break;
+      }
     }
-    switch (buf[2] & 0x0c) {
-      case 0x00:
-        work = 144 * work / 44100;
-        break;
-      case 0x04:
-        work = 144 * work / 48000;
-        break;
-      case 0x08:
-        work = 144 * work / 32000;
-        break;
-      default :
-        return MAD_FLOW_STOP;
+    if ((buf[1] & 0x06) == 6) {
+      switch (buf[2] & 0x0c) {
+        case 0x00:
+          work = 12 * work / 44100;
+          break;
+        case 0x04:
+          work = 12 * work / 48000;
+          break;
+        case 0x08:
+          work = 12 * work / 32000;
+          break;
+        default :
+          return MAD_FLOW_STOP;
+      }
+    } else {
+      switch (buf[2] & 0x0c) {
+        case 0x00:
+          work = 144 * work / 44100;
+          break;
+        case 0x04:
+          work = 144 * work / 48000;
+          break;
+        case 0x08:
+          work = 144 * work / 32000;
+          break;
+        default :
+          return MAD_FLOW_STOP;
+      }
     }
   }
   if (buf[2] & 0x02) {
@@ -1137,21 +1405,22 @@ enum mad_flow output(void *data,
   left_ch   = pcm->samples[0];
   right_ch  = pcm->samples[1];
   unsigned int i;
-  if (nsamples != 1152) {
-    printf("nsamples:%d\n",nsamples);
-  }
   while ((! mp3FlgFirst) && (ring_buffer_p_in == ring_buffer_p_out));
   i = 0;
-  while (i < MAX_BUFF) {
-    ring_buffer[ring_buffer_p_in][i++] = scale(*left_ch++);
-    ring_buffer[ring_buffer_p_in][i++] = scale(*right_ch++);
+  while (i < 2 * nsamples) {
+    ring_buffer[ring_buffer_p_in][ring_buffer_sub_p + i++] = scale(*left_ch++);
+    ring_buffer[ring_buffer_p_in][ring_buffer_sub_p + i++] = scale(*right_ch++);
   }
-  ring_buffer_p_in++;
-  if (ring_buffer_p_in >= RING_BUF_SIZE) {
-    ring_buffer_p_in  = 0;
-    if (mp3FlgFirst) {
-      play((uint32_t)ring_buffer[0], MAX_BUFF * 2);
-      mp3FlgFirst = 0;
+  ring_buffer_sub_p += (2 * nsamples);
+  if (ring_buffer_sub_p >= MAX_BUFF) {
+    ring_buffer_sub_p = 0;
+    ring_buffer_p_in++;
+    if (ring_buffer_p_in >= RING_BUF_SIZE) {
+      ring_buffer_p_in  = 0;
+      if (mp3FlgFirst) {
+        play((uint32_t)ring_buffer[0], MAX_BUFF * 2);
+        mp3FlgFirst = 0;
+      }
     }
   }
   return MAD_FLOW_CONTINUE;
@@ -1167,7 +1436,8 @@ enum mad_flow error(void *data,
 
 void Mp3PlayBack(uint32_t AudioFreq)
 {
-  i2s_clockset(AudioFreq);
+  if (! i2s_clockset(AudioFreq,16)) return;
+  setDAC(AudioFreq,16);
   /* Start playing */
   Command_index = 0;
   sw_status = 1;
@@ -1181,6 +1451,7 @@ void Mp3PlayBack(uint32_t AudioFreq)
   oldFrameSize = 0;
   ring_buffer_p_in  = 0;
   ring_buffer_p_out = 0;
+  ring_buffer_sub_p = 0;
   mp3i = 0;
   mp3FlgFirst = 1;
 
@@ -1194,17 +1465,42 @@ void Mp3PlayBack(uint32_t AudioFreq)
 }
 #endif
 
-void i2s_clockset(uint32_t freq)
+void startI2S(uint32_t AudioFreq,uint32_t AudioBit);
+
+int i2s_clockset(uint32_t AudioFreq,uint32_t AudioBit)
 {
+/*
+  32kHz   16bit PLLI2S_N = 213 PLLI2S_R = 2
+  44.1kHz 16bit PLLI2S_N = 271 PLLI2S_R = 6
+  48kHz   16bit PLLI2S_N = 258 PLLI2S_R = 3
+  96kHz   24bit PLLI2S_N = 344 PLLI2S_R = 2
+*/
   static uint32_t old_freq = 44100;
-  if ((old_freq == freq) || ((freq != 44100) && (freq != 48000)))
-    return;
-  old_freq = freq;
+  if ((old_freq == AudioFreq) && (old_bit == AudioBit)) return 1;
+  if (!(((AudioBit == 16) && ((AudioFreq == 16000) || (AudioFreq == 22050) || (AudioFreq == 24000) || (AudioFreq == 32000) || (AudioFreq == 44100) || (AudioFreq == 48000))) || ((AudioBit == 24) && ((AudioFreq == 96000))))) return 0;
+
+  old_freq = AudioFreq;
+  old_bit = AudioBit;
   uint32_t PLLI2S_N = 271;
   uint32_t PLLI2S_R = 6;
-  if (freq == 48000) {
+  if (AudioFreq == 48000) {
     PLLI2S_N = 258;
     PLLI2S_R = 3;
+  } else if (AudioFreq == 24000) {
+    PLLI2S_N = 258;
+    PLLI2S_R = 6;
+  } else if (AudioFreq == 22050) {
+    PLLI2S_N = 271;
+    PLLI2S_R = 12;
+  } else if (AudioFreq == 32000) {
+    PLLI2S_N = 213;
+    PLLI2S_R = 2;
+  } else if (AudioFreq == 16000) {
+    PLLI2S_N = 213;
+    PLLI2S_R = 4;
+  } else if (AudioFreq == 96000) {
+    PLLI2S_N = 344;
+    PLLI2S_R = 2;
   }
   /* Disable PLLI2S */
   RCC->CR &= ~((uint32_t)RCC_CR_PLLI2SON);
@@ -1219,8 +1515,9 @@ void i2s_clockset(uint32_t freq)
   {
   }
   /* I2Sポートをスタート */
-  startI2S();
+  startI2S(AudioFreq,AudioBit);
   /* IRQの設定とDMAのイネーブル */
   setIRQandDMA();
+  return 1;
 }
 

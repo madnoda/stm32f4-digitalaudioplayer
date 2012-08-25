@@ -29,13 +29,14 @@ USING_PRINTF		= USE_PRINTF
 UART_DEFAULT_NUM	= 1
 USE_MP3			= MP3
 USE_MP3FPM		= FPM_DEFAULT
+USE_W96K		= W96K
 
 # Use FreeRTOS?
 
 # Synthesis makefile Defines
 DEFZ =	\
 	$(USE_PHY) $(PERIF_DRIVER) $(USE_MP3) $(USE_MP3FPM)	\
-	$(USE_FPU) $(SUBMODEL) $(USE_ADC)						\
+	$(USE_W96K) $(USE_FPU) $(SUBMODEL) $(USE_ADC)			\
 	$(USE_CLOCK) $(USING_PRINTF) $(USING_USART)
 
 SYNTHESIS_DEFS	= $(addprefix -D,$(DEFZ))						\
@@ -111,12 +112,17 @@ CFILES = \
  $(FATFSLIB)/diskio_sdio.c 			\
  $(FATFSLIB)/option/cc932.c
 
+ifeq ($(USE_W96K),W96K)
+CFILES += \
+ $(SOURCE)/system_stm32f4xxW96K.c
+else
 ifeq ($(USE_MP3),MP3)
 CFILES += \
  $(SOURCE)/system_stm32f4xxMP3.c
 else
 CFILES += \
  $(SOURCE)/system_stm32f4xx.c
+endif
 endif
 
 ifeq ($(USE_MP3),MP3)
