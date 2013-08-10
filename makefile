@@ -16,7 +16,7 @@ USING_FPU		= -mfloat-abi=softfp  -mfpu=fpv4-sp-d16
 # Apprication Version
 APP_VER = W.I.P
 
-SUBMODEL		= STM32F405RGT6
+SUBMODEL		= STM32F4XX
 
 MPU_DENSITY		= STM32F4xx
 HSE_CLOCK 		= 8000000
@@ -24,9 +24,11 @@ USE_CLOCK		= USE_HSE
 #USE_CLOCK		= USE_HSI
 PERIF_DRIVER	= USE_STDPERIPH_DRIVER
 USE_ADC			= NO_ADC
+# 2013.05.14 不思議な事に、USARTを使わないようにすると一曲演奏で終る
 USING_USART		= USE_USART
 USING_PRINTF		= USE_PRINTF
 UART_DEFAULT_NUM	= 1
+
 USE_MP3			= MP3
 USE_MP3FPM		= FPM_DEFAULT
 USE_W96K		= W96K
@@ -36,8 +38,8 @@ USE_W96K		= W96K
 # Synthesis makefile Defines
 DEFZ =	\
 	$(USE_PHY) $(PERIF_DRIVER) $(USE_MP3) $(USE_MP3FPM)	\
-	$(USE_W96K) $(USE_FPU) $(SUBMODEL) $(USE_ADC)			\
-	$(USE_CLOCK) $(USING_PRINTF) $(USING_USART)
+	$(USE_W96K) $(USE_FPU) $(SUBMODEL)						\
+	$(USE_ADC)	$(USE_CLOCK) $(USING_PRINTF) $(USING_USART)
 
 SYNTHESIS_DEFS	= $(addprefix -D,$(DEFZ))						\
 		 -DPACK_STRUCT_END=__attribute\(\(packed\)\) 			\
@@ -57,34 +59,34 @@ TARGET_LSS  = $(TARGET).lss
 TARGET_SYM  = $(TARGET).sym
 
 # define Cortex-M4 LIBRARY PATH
-FWLIB  		= ../STM32F4-Discovery_FW_V1.1.0/Libraries/STM32F4xx_StdPeriph_Driver
-CM4LIB 		= ../STM32F4-Discovery_FW_V1.1.0/Libraries/CMSIS/
-CM4_DEVICE 	= $(CM4LIB)/ST/STM32F4xx
+FWLIB  		= ../STM32F4xx_DSP_StdPeriph_Lib_V1.1.0/Libraries/STM32F4xx_StdPeriph_Driver
+CM4LIB 		= ../STM32F4xx_DSP_StdPeriph_Lib_V1.1.0/Libraries/CMSIS
+CM4_DEVICE 	= $(CM4LIB)/Device/ST/STM32F4xx
 CM4_CORE	= $(CM4LIB)/Include
 
-FATFS		= ../STM32F407xGT6_FatFS_DISP_20120710
-FATFSLIB	= $(FATFS)/lib/ff
+FATFS		= ../STM32F4x7xxT6_FatFs_DISP_20130710
+#FATFSLIB	= $(FATFS)/lib/STM32F4xx_StdPeriph_Driver
+FATFSFF		= $(FATFS)/lib/ff
 
 MP3LIB		= ../libmad-0.15.1b
 
 # include PATH
 
+INCPATHS	 = 	./					\
+			./inc					\
+			$(FWLIB)/inc  			\
+			$(CM4_DEVICE)/Include	\
+			$(CM4_CORE)				\
+			$(LIBNKF)				\
+			$(FATFSFF)
 
-INCPATHS	 =															\
- 	./																	\
-	./inc																\
-	../STM32F4-Discovery_FW_V1.1.0/Libraries/CMSIS/ST/STM32F4xx/Include			\
-	../STM32F4-Discovery_FW_V1.1.0/Libraries/CMSIS/Include				\
-	../STM32F4-Discovery_FW_V1.1.0/Libraries/STM32F4xx_StdPeriph_Driver/inc
-
-INCPATHS += \
-	$(FATFSLIB)
+#INCPATHS += \
+#	$(FATFSLIB)
 
 ifeq ($(USE_MP3),MP3)
 INCPATHS += \
 	$(MP3LIB)
 endif
-
 
 INCLUDES     = $(addprefix -I ,$(INCPATHS))
 
@@ -105,23 +107,23 @@ LIBOBJS  = $(LIBCFILES:%.c=%.o) $(SFILES:%.s=%.o)
 # C code PATH
 SOURCE  = ./src
 CFILES = \
- $(SOURCE)/main.c						\
- $(SOURCE)/sd.c							\
- $(FATFSLIB)/ff.c 						\
- $(FATFSLIB)/sdio_stm32f4.c 			\
- $(FATFSLIB)/diskio_sdio.c 			\
- $(FATFSLIB)/option/cc932.c
+ $(SOURCE)/main.c					\
+ $(SOURCE)/sd.c						\
+ $(FATFSFF)/ff.c 					\
+ $(FATFSFF)/sdio_stm32f4.c 			\
+ $(FATFSFF)/diskio_sdio.c 			\
+ $(FATFSFF)/option/cc932.c
 
 ifeq ($(USE_W96K),W96K)
-CFILES += \
+ CFILES += \
  $(SOURCE)/system_stm32f4xxW96K.c
 else
 ifeq ($(USE_MP3),MP3)
-CFILES += \
- $(SOURCE)/system_stm32f4xxMP3.c
+ CFILES += \
+  $(SOURCE)/system_stm32f4xxMP3.c
 else
-CFILES += \
- $(SOURCE)/system_stm32f4xx.c
+ CFILES += \
+  $(SOURCE)/system_stm32f4xx.c
 endif
 endif
 
@@ -149,11 +151,10 @@ CFILES += \
  $(SOURCE)/stm32f4xx_it.c
 endif
 
-
 #/*----- STARTUP code PATH -----*/
 STARTUP_DIR = $(CM4_DEVICE)/Source/Templates/gcc_ride7
 SFILES += \
-	$(STARTUP_DIR)/startup_stm32f4xx.s
+	$(STARTUP_DIR)/startup_stm32f40xx.s
 
 #/*----- STM32 library PATH -----*/
 LIBCFILES = \
@@ -175,7 +176,6 @@ ifeq ($(OPTIMIZE),0)
 CFILES += \
  ./lib/IOView/stm32f4xx_io_view.c
 endif
-
 
 # TOOLCHAIN SETTING
 CC 			= $(TCHAIN)-gcc

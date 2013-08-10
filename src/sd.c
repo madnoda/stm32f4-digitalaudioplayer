@@ -81,7 +81,9 @@ static void put_rc (FRESULT rc)
     "INVALID_DRIVE\0" "NOT_ENABLED\0" "NO_FILE_SYSTEM\0" "MKFS_ABORTED\0" "TIMEOUT\0"
     "LOCKED\0" "NOT_ENOUGH_CORE\0" "TOO_MANY_OPEN_FILES\0";
   FRESULT i;
+#endif
 
+#ifdef USE_PRINTF
   for (i = 0; i != rc && *str; i++) {
     while (*str++) ;
   }
@@ -256,11 +258,14 @@ FRESULT lsSD()
     printf("%4u File(s),%10lu bytes total\n%4u  dir(s)", s1, p1, s2);
 #endif
     res = f_getfree("", (DWORD*)&p1, &fs);
+    if (res == FR_OK) {
 #ifdef USE_PRINTF
-    if (res == FR_OK)
       printf(", %10lu bytes free\n", p1 * fs->csize * 512);
-    else
+#endif
+    } else {
       put_rc(res);
+    }
+#ifdef USE_PRINTF
     printf("WAVE File %u \n", sMUSIC);
 #endif
   }
@@ -393,7 +398,6 @@ void Delay(__IO uint32_t nTime)
 
 void sdio_play(char * filename)
 { 
-
   char path[] = "0:/";
   ring_buffer_p_in  = 0;
   ring_buffer_p_out = 0;
@@ -444,6 +448,7 @@ void sdio_play(char * filename)
            printf("\n");
          }
 #endif
+
       }
       WaveFileStatus = WavePlayer_WaveParsing(&wavelen);
 
@@ -468,7 +473,6 @@ void sdio_play(char * filename)
         /* Unvalid wave file */
         if (WaveFileStatus == Valid_WAVE_File) {
 #ifdef USE_PRINTF
-
           /* the .MP3 file is valid */
           printf("the .MP3 file %s is valid\r\n",filename);
           /* Set WaveDataLenght to the Speech wave length */
@@ -988,7 +992,20 @@ void WavePlayBack(uint32_t AudioFreq,uint32_t AudioBit)
 #endif
   ring_buffer_p_in  = 0;
   ring_buffer_p_out = 0;
-  
+/* 2013.08.07 曲の終わりのジャっと言う音の対策 未だ完全ではない */
+#ifndef MP3
+  if (WaveDataLength < 2 * _MAX_SS * RING_BUF_SIZE) {
+    WaveDataLength = 0;
+  } else {
+    WaveDataLength -= 2 * _MAX_SS * RING_BUF_SIZE;
+  }
+#else
+  if(WaveDataLength < 2 * MAX_BUFF * RING_BUF_SIZE) {
+    WaveDataLength = 0;
+  } else {
+    WaveDataLength -= 2 * MAX_BUFF * RING_BUF_SIZE;
+  }
+#endif   
   while(WaveDataLength != 0)
   { 
     /* Test on the command: Playing */
@@ -1037,7 +1054,19 @@ void WavePlayBack(uint32_t AudioFreq,uint32_t AudioBit)
       }
 #ifndef NO_ADC
       if (adcCount == 0) {
-        adcCount = 100;
+        if (AudioFreq <= 48000) {
+          if (AudioBit == 16) {
+            adcCount = 100;
+          } else {
+            adcCount = 150;
+          }
+        } else {
+          if (AudioBit == 16) {
+            adcCount = 200;
+          } else {
+            adcCount = 300;
+          }
+        }
         while(ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
         while(ADC_GetFlagStatus(ADC2, ADC_FLAG_EOC) == RESET);
         adc1w = ADC_GetConversionValue(ADC1) & 0x0fff;
@@ -1059,8 +1088,8 @@ void WavePlayBack(uint32_t AudioFreq,uint32_t AudioBit)
       adcCount--;
 #endif
       if (sw_status) {
-        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7) &&
-            GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
+        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_13) &&
+            GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14)) {
           sw_count ++;
           if (sw_count >= 5) {
             sw_status = 0;
@@ -1070,11 +1099,11 @@ void WavePlayBack(uint32_t AudioFreq,uint32_t AudioBit)
           sw_count = 0;
         }
       } else {
-        if ((! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7)) || (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8))) {
+        if ((! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_13)) || (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14))) {
           sw_count ++;
           if (sw_count >= 5) {
-            if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_6)) {
-              if (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
+            if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_12)) {
+              if (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14)) {
                 Command_index = 1;
               } else {
                 Command_index = 2;
@@ -1361,8 +1390,8 @@ enum mad_flow input(void *data,
     return MAD_FLOW_STOP;
 #endif
   if (sw_status) {
-    if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7) &&
-        GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
+    if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_13) &&
+        GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14)) {
       sw_count ++;
       if (sw_count >= 5) {
         sw_status = 0;
@@ -1372,11 +1401,11 @@ enum mad_flow input(void *data,
       sw_count = 0;
     }
   } else {
-    if ((! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_7)) || (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8))) {
+    if ((! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_13)) || (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14))) {
       sw_count ++;
       if (sw_count >= 5) {
-        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_6)) {
-          if (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8)) {
+        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_12)) {
+          if (! GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_14)) {
             Command_index = 1;
           } else {
             Command_index = 2;

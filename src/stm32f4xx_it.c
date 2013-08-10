@@ -1,5 +1,7 @@
 #include "main.h"
+#ifdef USE_USART
 #include "uart_support.h"
+#endif
 
 __IO uint8_t PauseResumeStatus = 2, Count = 0;
 uint16_t capture = 0;
@@ -53,14 +55,15 @@ void PendSV_Handler(void)
 {
 }
 
+__IO uint32_t TimingDelay;
+
 void SysTick_Handler(void)
 {
-//  TimingDelay_Decrement();
 }
 
 void USART2_IRQHandler(void)
 {
-
+#ifdef USE_USART
 	if(USART_GetITStatus(USART2, USART_IT_RXNE) != RESET)
 	{
 		/* Advance buffer head. */
@@ -98,11 +101,12 @@ void USART2_IRQHandler(void)
 		}
 
 	}
+#endif
 }
 
 void USART1_IRQHandler(void)
 {
-
+#ifdef USE_USART
 	if(USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)
 	{
 		/* Advance buffer head. */
@@ -140,6 +144,7 @@ void USART1_IRQHandler(void)
 		}
 
 	}
+#endif
 }
 
 void EXTI1_IRQHandler(void)
@@ -150,4 +155,25 @@ void TIM4_IRQHandler(void)
 {
 }
 
+void DMA2_Stream0_IRQHandler(void)
+{
+  /* Test on DMA Stream Transfer Complete interrupt */
+  if(DMA_GetITStatus(DMA2_Stream0, DMA_IT_TCIF0))
+  {
+    /* Clear DMA Stream Transfer Complete interrupt pending bit */
+    DMA_ClearITPendingBit(DMA2_Stream0, DMA_IT_TCIF0);  
+    
+  }
+}
+
+void DMA1_Stream0_IRQHandler(void)
+{
+  /* Test on DMA Stream Transfer Complete interrupt */
+  if(DMA_GetITStatus(DMA1_Stream4, DMA_IT_TCIF0))
+  {
+    /* Clear DMA Stream Transfer Complete interrupt pending bit */
+    DMA_ClearITPendingBit(DMA1_Stream4, DMA_IT_TCIF0);  
+    
+  }
+}
 

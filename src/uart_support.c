@@ -1,6 +1,5 @@
 #include "uart_support.h"
 
-USART_InitTypeDef USART_InitStructure;
 static USART_TypeDef* UART;
 static USART_Buffer_t* pUSART_Buf;
 USART_Buffer_t USART1_Buf;
@@ -10,7 +9,8 @@ void conio_init(uint32_t port, uint32_t baudrate)
 {
 	GPIO_InitTypeDef GPIO_InitStructure;
 	NVIC_InitTypeDef NVIC_InitStructure;
-  
+	USART_InitTypeDef USART_InitStructure;
+
 	/* Turn on USART*/
 	switch (port)
 	{

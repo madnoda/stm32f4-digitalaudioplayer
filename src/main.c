@@ -1,8 +1,8 @@
 #include <math.h>
 
-/* HLD: N/A  => PB6 */
-/* RWD: N/A  => PB7 */
-/* FF:  PB2  => PB8 */
+/* HLD: PB6  => PB12 */
+/* RWD: PB7  => PB13 */
+/* FF:  PB8  => PB14 */
 
 #ifdef USE_USART
 #include "uart_support.h"
@@ -26,26 +26,25 @@ void setIRQandDMA(void);
 void initADC();
 extern __IO uint8_t Command_index;
 
-
 int main(void)
 {
   UINT n = 0;
   GPIO_InitTypeDef  GPIO_InitStructure;
 
-/* FF用のPB8の設定 */
+/* FF用のPB14の設定 */
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
   GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_8;
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_14;
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
   GPIO_Init(GPIOB, &GPIO_InitStructure);
-/* RWD用のPB7の設定 */
-  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_7;
+/* RWD用のPB13の設定 */
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_13;
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
   GPIO_Init(GPIOB, &GPIO_InitStructure);
-/* HOLD用のPB6の設定 */
-  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6;
+/* HOLD用のPB12の設定 */
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_12;
   GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
   GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
   GPIO_Init(GPIOB, &GPIO_InitStructure);
@@ -83,15 +82,12 @@ int main(void)
 
 /* ADCの初期化 */
   initADC();
-
 /* I2Sポートの初期化*/
   initI2S();
 /* I2Sポートをスタート */
   startI2S(44100,16);
-
 /* IRQの設定とDMAのイネーブル */
   setIRQandDMA();
-
   if ((!initSD()) && (lsSD() == FR_OK)) {
     while (Command_index != 3) {
       sdio_playNO(n);
@@ -113,6 +109,9 @@ int main(void)
       }
     }
   }
+  while(1) {
+  }
+
 #ifndef NO_ADC
 #ifdef USE_PRINTF
   printf("Low Voltage Stop\n");

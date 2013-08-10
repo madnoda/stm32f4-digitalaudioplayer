@@ -17,7 +17,6 @@ void EXTI0_IRQHandler(void);
 void EXTI1_IRQHandler(void);
 void RTC_Alarm_IRQHandler(void);
 void TIM2_IRQHandler(void);
-// extern void USB_OTG_BSP_TimerIRQ(void);
 
 #ifdef __cplusplus
 }
